@@ -1,0 +1,75 @@
+name: Grafik Üret
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Sembol (THYAO, AAPL, BTC-USD, bist:ASELS ...)"
+        required: true
+        default: "THYAO"
+      interval:
+        description: "Bar aralığı"
+        required: true
+        default: "1d"
+        type: choice
+        options: ["5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
+      bars:
+        description: "Gösterilecek bar sayısı"
+        required: false
+        default: "250"
+      views:
+        description: "Kareler: set (6), all (7) veya virgüllü liste"
+        required: false
+        default: "set"
+      theme:
+        description: "Tema"
+        required: false
+        default: "ink"
+        type: choice
+        options: ["ink", "paper"]
+      send_telegram:
+        description: "Telegram'a gönder"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Testler
+        run: python -m unittest discover -s tests -t .
+
+      - name: Grafiği üret
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -m src.cli \
+            --symbol "${{ inputs.symbol }}" \
+            --interval "${{ inputs.interval }}" \
+            --bars "${{ inputs.bars }}" \
+            --views "${{ inputs.views }}" \
+            --theme "${{ inputs.theme }}" \
+            --outdir out \
+            ${{ inputs.send_telegram == true && '--telegram' || '' }}
+
+      - name: Çıktıları yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafik-${{ inputs.symbol }}-${{ inputs.interval }}
+          path: out/
+          retention-days: 14
