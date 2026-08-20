@@ -85,20 +85,31 @@ def resolve_keys(raw: str) -> tuple[str, ...]:
 
 
 def _intervals(raw: str) -> list[str]:
-    """'4h,1d,1wk' -> ['4h', '1d', '1wk']. Tekrarlar sirasi korunarak atilir."""
+    """'4h,1d,1wk' -> ['4h', '1d', '1wk']. Bosluk da ayirici sayilir.
+
+    PowerShell tuzagi: tirnaksiz yazilan 4h,1d,1wk ifadesinde '1d' bir ONDALIK
+    SAYI LITERALIDIR ve 1'e cevrilir; Python'a '4h,1,1wk' gelir. Bu yuzden
+    ciplak sayi goruldugunde hata mesajinda tirnak kullanmasi hatirlatilir.
+    """
     out: list[str] = []
-    for item in raw.split(","):
-        item = item.strip()
-        if item and item not in out:
+    for item in raw.replace(",", " ").split():
+        if item not in out:
             out.append(item)
     if not out:
         raise SystemExit("En az bir bar araligi gerekli")
+
     unknown = [i for i in out if i not in DEFAULT_PERIODS]
     if unknown:
-        raise SystemExit(
-            f"Bilinmeyen aralik: {', '.join(unknown)}\n"
-            f"Gecerli olanlar: {', '.join(DEFAULT_PERIODS)}"
-        )
+        message = [
+            f"Bilinmeyen aralik: {', '.join(unknown)}",
+            f"Gecerli olanlar: {', '.join(DEFAULT_PERIODS)}",
+        ]
+        if any(i.isdigit() for i in unknown):
+            message.append(
+                "İpucu: PowerShell'de '1d' ondalık sayı literalidir ve 1'e dönüşür. "
+                'Değeri tırnak içine alın: --interval "4h,1d,1wk"'
+            )
+        raise SystemExit("\n".join(message))
     return out
 
 

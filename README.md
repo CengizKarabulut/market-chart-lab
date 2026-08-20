@@ -83,6 +83,16 @@ Tüm kareler tek veri çekimi ve tek hesap turuyla üretilir.
 python -m src.cli --symbol TMPOL --interval 4h,1d,1wk --telegram
 ```
 
+**Windows PowerShell'de değeri tırnak içine alın:**
+
+```powershell
+python -m src.cli --symbol TMPOL --interval "4h,1d,1wk" --telegram
+```
+
+Tırnaksız yazıldığında PowerShell `1d` ifadesini ondalık sayı literali sayar ve `1`'e
+çevirir; Python'a `4h,1,1wk` ulaşır. Aynı tuzak `1mb`, `1kb`, `1gb` gibi son eklerde de
+vardır.
+
 Her periyot için ayrı bir ızgara üretilir ve Telegram'a ayrı ayrı gönderilir. Bir periyot
 başarısız olursa (örneğin saatlik veri gelmezse) diğerleri yine üretilir.
 
@@ -255,7 +265,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-78 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+80 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir

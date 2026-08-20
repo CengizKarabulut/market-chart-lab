@@ -571,6 +571,11 @@ class TestMultiInterval(unittest.TestCase):
         self.assertEqual(_intervals("4h,1d,1wk"), ["4h", "1d", "1wk"])
         self.assertEqual(_intervals(" 1d , 1d ,1wk "), ["1d", "1wk"])
 
+    def test_space_separated_also_works(self) -> None:
+        from src.cli import _intervals
+
+        self.assertEqual(_intervals("4h 1d 1wk"), ["4h", "1d", "1wk"])
+
     def test_unknown_interval_rejected(self) -> None:
         from src.cli import _intervals
 
@@ -578,6 +583,14 @@ class TestMultiInterval(unittest.TestCase):
             _intervals("7h")
         with self.assertRaises(SystemExit):
             _intervals("  ")
+
+    def test_powershell_literal_mangling_gets_a_hint(self) -> None:
+        """PowerShell tirnaksiz '1d' ifadesini 1'e cevirir; mesaj bunu acikla."""
+        from src.cli import _intervals
+
+        with self.assertRaises(SystemExit) as ctx:
+            _intervals("4h,1,1wk")
+        self.assertIn("tırnak", str(ctx.exception))
 
     def test_synthetic_intervals_declared(self) -> None:
         from src.data_sources import SYNTHETIC_INTERVALS
