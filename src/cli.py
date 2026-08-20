@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from . import indicators as ind
-from .pipeline import DEFAULT_PERIODS, build_chart, build_views
+from .pipeline import DEFAULT_PERIODS, INTERVAL_LABELS, build_chart, build_views
 from .compose import compose_grid
 from .render_html import render_html
 from .render_png import render_png
@@ -38,7 +38,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Gorunum yerine serbest gosterge listesi (tek kare uretir). "
                              "Gecerli: " + ",".join(ind.ALL_INDICATORS))
     parser.add_argument("--interval", "-i", default="1d",
-                        help=f"Bar araligi ({', '.join(DEFAULT_PERIODS)})")
+                        help="Bar araligi. Virgulle birden fazla verilebilir: "
+                             "'4h,1d,1wk' -> her biri icin ayri gorsel. "
+                             f"Gecerli: {', '.join(DEFAULT_PERIODS)}")
     parser.add_argument("--bars", "-b", type=int, default=250,
                         help="Grafikte gosterilecek bar sayisi (varsayilan 250)")
     parser.add_argument("--period", default=None,
@@ -82,13 +84,29 @@ def resolve_keys(raw: str) -> tuple[str, ...]:
     return keys
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    theme = get_theme(args.theme)
+def _intervals(raw: str) -> list[str]:
+    """'4h,1d,1wk' -> ['4h', '1d', '1wk']. Tekrarlar sirasi korunarak atilir."""
+    out: list[str] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item and item not in out:
+            out.append(item)
+    if not out:
+        raise SystemExit("En az bir bar araligi gerekli")
+    unknown = [i for i in out if i not in DEFAULT_PERIODS]
+    if unknown:
+        raise SystemExit(
+            f"Bilinmeyen aralik: {', '.join(unknown)}\n"
+            f"Gecerli olanlar: {', '.join(DEFAULT_PERIODS)}"
+        )
+    return out
 
+
+def _build_one(args, interval: str, theme, outdir: Path):
+    """Tek bir bar araligi icin kareleri uretir ve dosyalari yazar."""
     if args.indicators:
         view_set = build_chart(
-            symbol=args.symbol, interval=args.interval, bars=args.bars,
+            symbol=args.symbol, interval=interval, bars=args.bars,
             period=args.period, keys=resolve_keys(args.indicators),
             project_bars=args.project_bars, log_price=_scale(args.scale),
         )
@@ -98,16 +116,15 @@ def main(argv: list[str] | None = None) -> int:
         except KeyError as exc:
             raise SystemExit(str(exc)) from exc
         view_set = build_views(
-            symbol=args.symbol, views=views, interval=args.interval,
+            symbol=args.symbol, views=views, interval=interval,
             bars=args.bars, period=args.period, project_bars=args.project_bars,
             log_price=_scale(args.scale),
         )
 
-    outdir = Path(args.outdir)
-    stem = f"{view_set.symbol.display.replace('-', '_')}_{args.interval}"
+    stem = f"{view_set.symbol.display.replace('-', '_')}_{interval}"
     png_paths: list[Path] = []
-
     grid_path: Path | None = None
+
     if not args.no_png:
         use_grid = args.grid > 0 and len(view_set) > 1
         tiles: list[Path] = []
@@ -122,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             grid_path = outdir / f"{stem}_izgara.png"
             compose_grid(
                 tiles, grid_path, theme, columns=args.grid,
-                title=f"{view_set.symbol.display}",
+                title=f"{view_set.symbol.display} · {INTERVAL_LABELS.get(interval, interval)}",
                 subtitle=f"{view_set.subtitle} · {view_set.generated_at}",
             )
             png_paths = [grid_path]
@@ -133,40 +150,61 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_html:
         render_html(
             frames=[(r.key, r.view.title, r.view.note, r.spec) for r in view_set],
-            theme=theme,
-            path=html_path,
-            ticker=view_set.symbol.display,
-            subtitle=view_set.subtitle,
-            source=view_set.source_label,
-            generated=view_set.generated_at,
+            theme=theme, path=html_path,
+            ticker=view_set.symbol.display, subtitle=view_set.subtitle,
+            source=view_set.source_label, generated=view_set.generated_at,
             embed_js=args.embed_js,
         )
 
-    for path in png_paths + ([html_path] if not args.no_html else []):
-        print(f"yazildi: {path}  ({path.stat().st_size / 1024:.0f} KB)")
+    return view_set, png_paths, grid_path, html_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    theme = get_theme(args.theme)
+    outdir = Path(args.outdir)
+    intervals = _intervals(args.interval)
+
+    produced = []
+    for interval in intervals:
+        try:
+            produced.append((interval,) + _build_one(args, interval, theme, outdir))
+        except Exception as exc:  # noqa: BLE001
+            # Bir aralik basarisiz olursa digerleri yine de uretilsin;
+            # ornegin saatlik veri yoksa gunluk ve haftalik calismaya devam eder.
+            print(f"HATA [{interval}]: {exc}")
+            if len(intervals) == 1:
+                raise
+
+    if not produced:
+        raise SystemExit("Hicbir aralik icin grafik uretilemedi")
+
+    for _, _, png_paths, _, html_path in produced:
+        for path in png_paths + ([html_path] if not args.no_html else []):
+            print(f"yazildi: {path}  ({path.stat().st_size / 1024:.0f} KB)")
 
     if args.telegram:
         from .telegram import build_caption, send_document, send_media_group, send_photo
 
-        caption = build_caption(
-            view_set.symbol.display, view_set.subtitle, view_set.results[0].spec.snapshot
-        )
-        if png_paths:
-            if len(png_paths) == 1:
-                # Izgara gorseli genis oldugu icin fotograf olarak gonderilirse
-                # Telegram uzun kenari ~1280'e indirir ve yazilar okunmaz olur.
-                # Bu yuzden buyuk gorseller dosya olarak gider.
-                image = png_paths[0]
-                if grid_path is not None:
-                    send_document(image, caption)
+        for interval, view_set, png_paths, grid_path, html_path in produced:
+            label = INTERVAL_LABELS.get(interval, interval)
+            caption = build_caption(
+                f"{view_set.symbol.display} · {label}",
+                view_set.subtitle, view_set.results[0].spec.snapshot,
+            )
+            if png_paths:
+                if len(png_paths) == 1:
+                    # Izgara genis oldugu icin fotograf olarak gonderilirse
+                    # Telegram uzun kenari ~1280'e indirir ve yazilar okunmaz olur.
+                    if grid_path is not None:
+                        send_document(png_paths[0], caption)
+                    else:
+                        send_photo(png_paths[0], caption)
                 else:
-                    send_photo(image, caption)
-            else:
-                send_media_group(png_paths, caption)
-            print(f"telegram: {len(png_paths)} gorsel gonderildi")
-        if not args.no_html:
-            send_document(html_path, "Etkileşimli sürüm (sekmeli)")
-            print("telegram: HTML gonderildi")
+                    send_media_group(png_paths, caption)
+                print(f"telegram [{label}]: {len(png_paths)} gorsel gonderildi")
+            if not args.no_html:
+                send_document(html_path, f"{view_set.symbol.display} · {label} · etkileşimli")
 
     return 0
 

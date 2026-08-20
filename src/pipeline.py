@@ -24,6 +24,8 @@ INTERVAL_LABELS = {
     "15m": "15 dakika",
     "30m": "30 dakika",
     "1h": "1 saat",
+    "2h": "2 saat",
+    "3h": "3 saat",
     "4h": "4 saat",
     "1d": "günlük",
     "1wk": "haftalık",
@@ -37,7 +39,11 @@ DEFAULT_PERIODS = {
     "15m": "1mo",
     "30m": "3mo",
     "1h": "6mo",
-    "4h": "1y",
+    "2h": "1y",
+    "3h": "1y",
+    # 4 saatlik barlar saatlikten turetildigi icin saatlik gecmis cekilir;
+    # yfinance saatlik veride 2 yildan eskiye izin vermez.
+    "4h": "2y",
     "1d": "2y",
     "1wk": "5y",
     "1mo": "10y",

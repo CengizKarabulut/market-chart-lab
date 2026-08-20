@@ -507,3 +507,82 @@ class TestPanelClippingApplied(unittest.TestCase):
         panel = _volume_panel(self.df, self.series)
         self.assertIsNotNone(panel.yrange, "Hacim paneli kirpma uygulamiyor")
         self.assertLess(panel.yrange[1], float(self.series["VOL"].max()))
+
+
+class TestResampling(unittest.TestCase):
+    """4 saatlik barlar saatlikten turetilir; gun sinirlari korunmali."""
+
+    def _hourly(self, days: int = 3, per_day: int = 8) -> pd.DataFrame:
+        stamps = [
+            pd.Timestamp("2026-08-17 10:00") + pd.Timedelta(days=d, hours=h)
+            for d in range(days) for h in range(per_day)
+        ]
+        n = len(stamps)
+        return pd.DataFrame(
+            {"Open": np.arange(n, dtype=float) + 1,
+             "High": np.arange(n, dtype=float) + 2,
+             "Low": np.arange(n, dtype=float),
+             "Close": np.arange(n, dtype=float) + 1.5,
+             "Volume": np.full(n, 10.0)},
+            index=pd.DatetimeIndex(stamps),
+        )
+
+    def test_ohlc_aggregation(self) -> None:
+        from src.data_sources import resample_bars
+
+        out = resample_bars(self._hourly(days=1), 4)
+        self.assertEqual(len(out), 2)
+        first = out.iloc[0]
+        self.assertEqual(first["Open"], 1.0)      # ilk barin acilisi
+        self.assertEqual(first["Close"], 4.5)     # dorduncu barin kapanisi
+        self.assertEqual(first["High"], 5.0)      # en yuksek
+        self.assertEqual(first["Low"], 0.0)       # en dusuk
+        self.assertEqual(first["Volume"], 40.0)   # toplam
+
+    def test_days_never_merge(self) -> None:
+        """Kritik: bir gunun son bari ertesi gunun ilkiyle birlesmemeli."""
+        from src.data_sources import resample_bars
+
+        out = resample_bars(self._hourly(days=3), 4)
+        self.assertEqual(len(out), 6)  # gunde 2, uc gun
+        self.assertEqual(sorted(out.index.normalize().unique().tolist()),
+                         sorted(pd.DatetimeIndex([
+                             "2026-08-17", "2026-08-18", "2026-08-19"]).tolist()))
+
+    def test_partial_last_bucket_is_kept(self) -> None:
+        """Seans 4'e tam bolunmuyorsa artik bar yine de olusmali."""
+        from src.data_sources import resample_bars
+
+        out = resample_bars(self._hourly(days=1, per_day=6), 4)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out.iloc[1]["Volume"], 20.0)  # kalan iki bar
+
+    def test_factor_one_is_identity(self) -> None:
+        from src.data_sources import resample_bars
+
+        df = self._hourly(days=1)
+        pd.testing.assert_frame_equal(resample_bars(df, 1), df)
+
+
+class TestMultiInterval(unittest.TestCase):
+    def test_interval_list_parsing(self) -> None:
+        from src.cli import _intervals
+
+        self.assertEqual(_intervals("4h,1d,1wk"), ["4h", "1d", "1wk"])
+        self.assertEqual(_intervals(" 1d , 1d ,1wk "), ["1d", "1wk"])
+
+    def test_unknown_interval_rejected(self) -> None:
+        from src.cli import _intervals
+
+        with self.assertRaises(SystemExit):
+            _intervals("7h")
+        with self.assertRaises(SystemExit):
+            _intervals("  ")
+
+    def test_synthetic_intervals_declared(self) -> None:
+        from src.data_sources import SYNTHETIC_INTERVALS
+        from src.pipeline import DEFAULT_PERIODS, INTERVAL_LABELS
+
+        for key in SYNTHETIC_INTERVALS:
+            self.assertIn(key, DEFAULT_PERIODS, key)
+            self.assertIn(key, INTERVAL_LABELS, key)

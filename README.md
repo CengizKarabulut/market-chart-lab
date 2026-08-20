@@ -77,6 +77,22 @@ uygulanır, böylece ızgarada karolar hizalı durur.
 
 Tüm kareler tek veri çekimi ve tek hesap turuyla üretilir.
 
+### Çoklu periyot
+
+```bash
+python -m src.cli --symbol TMPOL --interval 4h,1d,1wk --telegram
+```
+
+Her periyot için ayrı bir ızgara üretilir ve Telegram'a ayrı ayrı gönderilir. Bir periyot
+başarısız olursa (örneğin saatlik veri gelmezse) diğerleri yine üretilir.
+
+**4 saatlik barlar türetilmiştir.** Ne yfinance ne borsapy 4 saatlik bar sunuyor; saatlik
+veri çekilip birleştiriliyor. Birleştirme takvim saatine göre değil **gün sınırlarına göre**
+yapılır: `pd.resample("4h")` barları 00:00, 04:00, 08:00 sınırlarına hizalar, bu da BIST'in
+10:00–18:00 seansında günün ilk barını bir önceki günün kovasına atardı. Bunun yerine her
+günün barları kendi içinde gruplanır; 8 saatlik seans günde iki bar verir ve seans 4'e tam
+bölünmezse artık bar yine de oluşur.
+
 ### Veriyi dürüst gösteren üç davranış
 
 **Tamamlanmamış son bar.** Seans açıkken çekilen veride son bar hâlâ oluşuyordur; RVOL,
@@ -159,7 +175,7 @@ Listede olmayan bir kodu tek seferlik kullanmak için `bist:` öneki yeterlidir.
 
 | Parametre | Varsayılan | Açıklama |
 |-----------|-----------|----------|
-| `--interval` | `1d` | `1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo` |
+| `--interval` | `1d` | Tek veya virgüllü liste: `4h,1d,1wk` → her biri için ayrı görsel |
 | `--bars` | `250` | Grafikte gösterilecek bar sayısı |
 | `--period` | aralığa göre | Çekilecek geçmiş; göstergeler tüm geçmişte hesaplanıp sonra kırpılır |
 | `--views` | `set` | `set` (4 kare ızgara), `all` (tümü) veya virgüllü görünüm listesi |
@@ -239,7 +255,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-71 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+78 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir

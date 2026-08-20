@@ -97,6 +97,47 @@ def resolve_symbol(symbol: str) -> SymbolSpec:
     return SymbolSpec(raw, "yfinance", code, "equity", code)
 
 
+#: Saglayicilarda YEREL olarak bulunmayan araliklar: (temel aralik, kac bar birlesecek)
+#: yfinance ve borsapy 4 saatlik bar sunmuyor; saatlikten turetiyoruz.
+SYNTHETIC_INTERVALS: dict[str, tuple[str, int]] = {
+    "2h": ("1h", 2),
+    "3h": ("1h", 3),
+    "4h": ("1h", 4),
+}
+
+
+def resample_bars(df: pd.DataFrame, factor: int) -> pd.DataFrame:
+    """Her N barı tek bara birlestirir, GUN SINIRLARINA saygi duyarak.
+
+    Neden takvim saatine gore resample() kullanilmiyor: BIST seansi 10:00-18:00
+    arasidir. pd.resample("4h") barlari 00:00, 04:00, 08:00... sinirlarina
+    hizalar; bu da seansin ilk barini bir onceki gunun bos kovasina atar ve
+    gunun ilk 4 saatini iki parcaya boler. Bunun yerine her gunun barlari
+    kendi icinde gruplanir, boylece gun sonunda eksik kalan bar (orn. 8 saatlik
+    seansta 4+4) dogru sekilde kapanir.
+    """
+    if factor <= 1 or len(df) == 0:
+        return df
+
+    days = df.index.normalize()
+    # Gun icinde sifirdan baslayan sira numarasi -> N'lik gruplar
+    position = df.groupby(days).cumcount()
+    bucket = position // factor
+    groups = [days, bucket]
+
+    out = df.groupby(groups).agg(
+        Open=("Open", "first"),
+        High=("High", "max"),
+        Low=("Low", "min"),
+        Close=("Close", "last"),
+        Volume=("Volume", "sum"),
+    )
+    # Grup indeksi (gun, kova) -> grubun ILK barinin zaman damgasi
+    stamps = df.index.to_series().groupby(groups).first()
+    out.index = pd.DatetimeIndex(stamps.to_numpy())
+    return out.sort_index()
+
+
 def _normalize(df: pd.DataFrame, source: str) -> pd.DataFrame:
     """Saglayicidan gelen tabloyu ortak OHLCV formatina cevirir."""
     if df is None or len(df) == 0:
@@ -160,6 +201,11 @@ def fetch_ohlcv(
     spec = resolve_symbol(symbol)
     errors: list[str] = []
 
+    # Yerel olmayan aralik istendiyse temel araligi cekip birlestir
+    factor = 1
+    if interval in SYNTHETIC_INTERVALS:
+        interval, factor = SYNTHETIC_INTERVALS[interval]
+
     attempts: list[tuple[str, SymbolSpec]] = []
     if spec.provider == "borsapy":
         attempts.append(("borsapy", spec))
@@ -179,6 +225,8 @@ def fetch_ohlcv(
         try:
             fetcher = _fetch_borsapy if provider == "borsapy" else _fetch_yfinance
             df = fetcher(attempt_spec, period, interval)
+            if factor > 1:
+                df = resample_bars(df, factor)
             if bars:
                 df = df.tail(bars)
             if len(df) < 30:
