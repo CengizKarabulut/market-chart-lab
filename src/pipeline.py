@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from . import indicators as ind
+from . import format as fmt
 from .data_sources import SymbolSpec, fetch_ohlcv
 from .views import VIEWS_BY_KEY, View
 from .plotspec import ChartSpec, build_spec, compute_keys_for
@@ -61,6 +62,26 @@ def default_params(interval: str, params: dict[str, dict] | None = None) -> dict
     return merged
 
 
+def last_bar_is_open(index: pd.DatetimeIndex, now: pd.Timestamp | None = None) -> bool:
+    """Son bar hala olusuyor mu?
+
+    Bar suresi, barlar arasi medyan farktan turetilir. Son barin baslangicina
+    bu sure eklendiginde gelecekte kaliyorsa bar henuz kapanmamistir.
+
+    Onemli: acik bir barda RVOL, RSI ve gunluk degisim gibi degerler gun
+    kapaninca degisir. Bunu isaretlemezsek grafik yaniltici olur; ornegin
+    yarim seansta RVOL dogal olarak 1'in cok altinda gorunur.
+    """
+    if len(index) < 3:
+        return False
+    now = now or pd.Timestamp.now()
+    deltas = pd.Series(index[1:]) - pd.Series(index[:-1])
+    step = deltas.median()
+    if pd.isna(step) or step <= pd.Timedelta(0):
+        return False
+    return bool(index[-1] + step > now)
+
+
 def _future_index(index: pd.DatetimeIndex, bars: int) -> pd.DatetimeIndex:
     """Mevcut barlarin ritmini surdurerek ileriye dogru bos zaman damgasi uretir."""
     if len(index) < 3 or bars <= 0:
@@ -96,7 +117,9 @@ def extend_future(
 
     new_index = df.index.append(future)
     df_ext = df.reindex(new_index)
-    ext = {k: v.reindex(new_index) for k, v in series.items()}
+    # Fiyat eksenli seriler (VP_hist) zaman indeksine sahip degil, dokunulmaz
+    ext = {k: (v if k.startswith("VP_") else v.reindex(new_index))
+           for k, v in series.items()}
 
     n = len(df.index)
     for span, raw in (("ICH_span_a", "ICH_span_a_raw"), ("ICH_span_b", "ICH_span_b_raw")):
@@ -145,6 +168,7 @@ def build_views(
     period: str | None = None,
     params: dict[str, dict] | None = None,
     project_bars: int | None = None,
+    log_price: bool | None = None,
 ) -> ViewSet:
     """Tum gorunumleri TEK veri cekimi ve TEK hesap turuyla uretir.
 
@@ -166,24 +190,37 @@ def build_views(
     # Gostergeler once TUM gecmis uzerinde hesaplanir, kirpma sonra yapilir;
     # aksi halde EMA200 gibi uzun periyotlar grafigin sol yarisinda bos kalirdi.
     df_full, symbol_spec = fetch_ohlcv(symbol, period=period, interval=interval)
-    series_full = ind.compute(df_full, keys=tuple(needed), params=params)
+
+    temporal = tuple(k for k in needed if k not in ind.NON_TEMPORAL)
+    series_full = ind.compute(df_full, keys=temporal, params=params)
 
     df_window = df_full.tail(bars)
     series_window = {k: v.reindex(df_window.index) for k, v in series_full.items()}
 
+    # Hacim profili gibi fiyat eksenli gostergeler GORUNEN pencereden hesaplanir;
+    # tum gecmisten hesaplanip kirpilirsa profil ekrandaki barlarla uyusmaz.
+    for key in needed:
+        if key in ind.NON_TEMPORAL:
+            series_window.update(ind.compute(df_window, keys=(key,), params=params))
+
     interval_label = INTERVAL_LABELS.get(interval, interval)
     last_ts = df_full.index[-1]
+    bar_open = last_bar_is_open(df_full.index)
     subtitle = (
         f"{interval_label} · {len(df_window)} bar · son bar "
-        f"{last_ts.strftime('%d.%m.%Y %H:%M')}"
+        f"{fmt.tam_tarih(last_ts)}" + (" · SON BAR AÇIK" if bar_open else "")
+    )
+
+    # Izgarada karolarin x eksenleri hizali dursun diye projeksiyon payi TUM
+    # karelere ayni sekilde uygulanir; yalnizca Ichimoku'lu kare uzatilsaydi
+    # o karo digerlerinden daha genis bir zaman araligi gosterirdi.
+    any_cloud = any("ichimoku" in v.keys for v in views)
+    ahead = (25 if any_cloud else 0) if project_bars is None else (
+        project_bars if any_cloud else 0
     )
 
     results: list[ChartResult] = []
     for view in views:
-        wants_cloud = "ichimoku" in view.keys
-        ahead = (25 if wants_cloud else 0) if project_bars is None else (
-            project_bars if wants_cloud else 0
-        )
         df_view, series_view = extend_future(df_window, series_window, ahead)
         results.append(
             ChartResult(
@@ -196,6 +233,8 @@ def build_views(
                     subtitle=subtitle,
                     note=view.note,
                     price_height=view.price_height,
+                    last_bar_open=bar_open,
+                    log_price=log_price,
                 ),
             )
         )
@@ -218,6 +257,7 @@ def build_chart(
     keys: tuple[str, ...] = ind.ALL_INDICATORS,
     params: dict[str, dict] | None = None,
     project_bars: int | None = None,
+    log_price: bool | None = None,
 ) -> ViewSet:
     """Serbest gosterge listesini tek bir gorunum gibi uretir."""
     view = View(
@@ -229,5 +269,5 @@ def build_chart(
     )
     return build_views(
         symbol, (view,), interval=interval, bars=bars, period=period,
-        params=params, project_bars=project_bars,
+        params=params, project_bars=project_bars, log_price=log_price,
     )

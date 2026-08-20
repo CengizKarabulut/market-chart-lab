@@ -56,9 +56,42 @@ def _add_trace(fig, trace: Trace, theme: Theme, x: list[str], row: int) -> None:
             col=1,
         )
 
+    if trace.kind == "vprofile" and trace.y is not None and len(trace.y):
+        prices = trace.y.index.to_numpy(dtype="float64")
+        vols = trace.y.to_numpy(dtype="float64")
+        peak = float(vols.max()) if len(vols) else 0.0
+        if peak <= 0:
+            return
+        # Yatay hacim profili: kategorik x ekseninde bar cizilemedigi icin
+        # ilk N kategoriye yayilan yatay bir bar grubu kullanilir.
+        fig.add_trace(
+            go.Bar(
+                x=[v / peak * (len(x) * 0.16) for v in vols],
+                y=prices, orientation="h", name=trace.name,
+                marker=dict(color=_rgba(color, trace.fill_alpha), line=dict(width=0)),
+                showlegend=False, hoverinfo="skip", xaxis="x2", yaxis="y",
+            )
+        )
+        return
+
+    if trace.kind == "dots" and trace.y is not None:
+        point_colors = [
+            theme.c(r) if isinstance(r, str) and r else color for r in trace.colors
+        ] if trace.colors is not None else color
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=trace.y.to_numpy(dtype="float64"), name=trace.name,
+                mode="markers", marker=dict(color=point_colors, size=2.6),
+                showlegend=trace.legend,
+                hovertemplate="%{fullData.name}: %{y:.4g}<extra></extra>",
+            ),
+            row=row, col=1,
+        )
+        return
+
     if trace.kind in {"bars", "hist"} and trace.y is not None:
         colors = (
-            [theme.c(str(r)) for r in trace.colors]
+            [theme.c(r) if isinstance(r, str) and r else color for r in trace.colors]
             if trace.colors is not None
             else color
         )
@@ -131,7 +164,6 @@ def build_figure(spec: ChartSpec, theme: Theme) -> go.Figure:
         shared_xaxes=True,
         vertical_spacing=0.022,
         row_heights=[r / total for r in ratios],
-        subplot_titles=[""] + [p.title for p in spec.panels],
     )
 
     fig.add_trace(
@@ -168,6 +200,9 @@ def build_figure(spec: ChartSpec, theme: Theme) -> go.Figure:
         if panel.yrange:
             fig.update_yaxes(range=list(panel.yrange), row=i, col=1)
 
+    if spec.log_price:
+        fig.update_yaxes(type="log", row=1, col=1)
+
     last = float(df["Close"].dropna().iloc[-1])
     fig.add_hline(
         y=last,
@@ -179,12 +214,31 @@ def build_figure(spec: ChartSpec, theme: Theme) -> go.Figure:
         col=1,
     )
 
+    # Panel kunyeleri: PNG'deki satir ici basliklarin karsiligi. Plotly'nin
+    # subplot_titles'i ortalar ve panelin ustune iter; burada sol uste sabitlenir.
+    for i, panel in enumerate(spec.panels, start=2):
+        values = []
+        for tr in panel.traces:
+            if tr.y is None or not tr.legend:
+                continue
+            clean = tr.y.dropna()
+            if len(clean):
+                values.append(f'<span style="color:{theme.c(tr.color)}">'
+                              f"{float(clean.iloc[-1]):.4g}</span>")
+        head = panel.title + (f" ({panel.params})" if panel.params else "")
+        fig.add_annotation(
+            text=" ".join([f'<span style="color:{theme.c("muted")}">{head}</span>'] + values),
+            xref=f"x{i} domain" if i > 1 else "x domain", yref=f"y{i} domain",
+            x=0.004, y=1.0, xanchor="left", yanchor="top", showarrow=False,
+            font=dict(family=theme.font_mono, size=10.5), align="left",
+        )
+
     fig.update_layout(
-        template="plotly_dark" if theme.name == "ink" else "plotly_white",
+        template="plotly_dark" if theme.name in {"ink", "tv"} else "plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor=theme.c("panel"),
         font=dict(family=theme.font_body, color=theme.c("text"), size=12),
-        margin=dict(l=56, r=64, t=28, b=36),
+        margin=dict(l=14, r=78, t=30, b=34),
         height=max(560, int(total * 155)),
         hovermode="x unified",
         hoverlabel=dict(
@@ -193,16 +247,14 @@ def build_figure(spec: ChartSpec, theme: Theme) -> go.Figure:
             font=dict(family=theme.font_mono, size=11, color=theme.c("text")),
         ),
         legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.005,
-            xanchor="left",
-            x=0,
-            font=dict(size=11, color=theme.c("muted")),
-            bgcolor="rgba(0,0,0,0)",
+            orientation="h", yanchor="bottom", y=1.005, xanchor="left", x=0,
+            font=dict(size=11, color=theme.c("muted")), bgcolor="rgba(0,0,0,0)",
         ),
         barmode="overlay",
         dragmode="pan",
+        # Hacim profili kendi gorunmez x ekseninde durur; fiyat eksenini paylasir
+        xaxis2=dict(overlaying="x", side="top", showgrid=False, showticklabels=False,
+                    range=[0, len(x)], fixedrange=True),
     )
     fig.update_xaxes(
         type="category",
@@ -225,14 +277,13 @@ def build_figure(spec: ChartSpec, theme: Theme) -> go.Figure:
         linecolor=theme.c("axis"),
         tickfont=dict(color=theme.c("muted"), size=10),
         zeroline=False,
+        side="right",  # TradingView'daki gibi fiyat olcegi sagda
+        showspikes=True,
+        spikemode="across",
+        spikecolor=theme.c("axis"),
+        spikethickness=1,
+        spikedash="dot",
     )
-    for annotation in fig.layout.annotations:
-        if annotation.text in {p.title for p in spec.panels}:
-            annotation.update(
-                font=dict(size=11, color=theme.c("muted")),
-                x=0,
-                xanchor="left",
-            )
     return fig
 
 

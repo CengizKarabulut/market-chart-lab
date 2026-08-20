@@ -21,12 +21,16 @@ on:
         description: "Kareler: set (6), all (7) veya virgüllü liste"
         required: false
         default: "set"
+      grid:
+        description: "Izgara sütun sayısı (0 = birleştirme yok)"
+        required: false
+        default: "2"
       theme:
         description: "Tema"
         required: false
-        default: "ink"
+        default: "tv"
         type: choice
-        options: ["ink", "paper"]
+        options: ["tv", "ink", "paper"]
       send_telegram:
         description: "Telegram'a gönder"
         required: false
@@ -57,12 +61,14 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: ${{ secrets.TELEGRAM_TOPIC_ID }}
         run: |
           python -m src.cli \
             --symbol "${{ inputs.symbol }}" \
             --interval "${{ inputs.interval }}" \
             --bars "${{ inputs.bars }}" \
             --views "${{ inputs.views }}" \
+            --grid "${{ inputs.grid }}" \
             --theme "${{ inputs.theme }}" \
             --outdir out \
             ${{ inputs.send_telegram == true && '--telegram' || '' }}

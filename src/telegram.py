@@ -1,8 +1,15 @@
 """Telegram teslimati.
 
 PNG fotograf olarak, etkilesimli HTML ise dosya (document) olarak gonderilir.
-Token ve chat id ortam degiskenlerinden okunur:
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+Ortam degiskenleri:
+    TELEGRAM_BOT_TOKEN   zorunlu
+    TELEGRAM_CHAT_ID     zorunlu (grup icin -100... ile baslar)
+    TELEGRAM_TOPIC_ID    istege bagli; forum modundaki gruplarda konu numarasi
+
+Konu numarasi web.telegram.org adresindeki baglantinin sonundaki sayidir:
+    https://web.telegram.org/a/#-1003502567927_18
+                                 ^chat id     ^konu
+Verilmezse mesaj grubun genel akisina duser, konuya degil.
 """
 
 from __future__ import annotations
@@ -21,19 +28,23 @@ class TelegramError(RuntimeError):
     pass
 
 
-def _credentials() -> tuple[str, str]:
+def _credentials() -> tuple[str, str, str]:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    topic_id = os.environ.get("TELEGRAM_TOPIC_ID", "").strip()
     if not token or not chat_id:
         raise TelegramError(
             "TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID ortam degiskenleri tanimli degil"
         )
-    return token, chat_id
+    return token, chat_id, topic_id
 
 
 def _post(method: str, files: dict, data: dict, timeout: int = 60) -> dict:
-    token, chat_id = _credentials()
+    token, chat_id, topic_id = _credentials()
     data = {"chat_id": chat_id, **data}
+    if topic_id:
+        # Forum modundaki gruplarda mesaji dogru konuya yonlendirir
+        data["message_thread_id"] = topic_id
     response = requests.post(
         API.format(token=token, method=method), data=data, files=files, timeout=timeout
     )
@@ -44,6 +55,7 @@ def _post(method: str, files: dict, data: dict, timeout: int = 60) -> dict:
 
 
 def send_photo(path: str | Path, caption: str = "") -> dict:
+    _credentials()  # eksik token hatasi, dosya hatasindan once verilsin
     path = Path(path)
     with path.open("rb") as handle:
         return _post(
@@ -54,6 +66,7 @@ def send_photo(path: str | Path, caption: str = "") -> dict:
 
 
 def send_document(path: str | Path, caption: str = "") -> dict:
+    _credentials()
     path = Path(path)
     with path.open("rb") as handle:
         return _post(
@@ -69,6 +82,7 @@ def send_media_group(paths: list[str | Path], caption: str = "") -> dict:
     Seri halinde gonderilen kareler boylece sohbette dagilmaz; basligi yalnizca
     ilk gorsel tasir.
     """
+    _credentials()
     paths = [Path(p) for p in paths]
     if not paths:
         raise TelegramError("Gonderilecek gorsel yok")

@@ -88,11 +88,15 @@ def atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
 
 def moving_averages(
     df: pd.DataFrame,
-    specs: tuple[tuple[str, int], ...] = (("ema", 20), ("ema", 50), ("sma", 200)),
+    specs: tuple[tuple[str, int], ...] = (("ema", 20), ("ema", 50)),
 ) -> dict[str, pd.Series]:
     """Fiyat uzerine bindirilecek ortalama seti.
 
     specs: (("ema", 20), ("sma", 200), ...) seklinde tip/periyot ciftleri.
+
+    Varsayilan iki cizgidir: mum paneli tek gostergeye ayrildigi icin uc-dort
+    ortalama ust uste binip grafigi okunmaz hale getiriyordu. Uzun vadeli
+    ortalama isteyen params={"ma": {"specs": (("ema",20),("sma",200))}} verir.
     """
     close = df["Close"]
     out: dict[str, pd.Series] = {}
@@ -286,7 +290,8 @@ def vwap(
 # --------------------------------------------------------------------------
 
 
-def volume_profile(df: pd.DataFrame, length: int = 20) -> dict[str, pd.Series]:
+def volume_bars(df: pd.DataFrame, length: int = 20) -> dict[str, pd.Series]:
+    """Hacim barlari ve 20 barlik ortalamaya gore bagil hacim."""
     vol = df["Volume"].astype("float64")
     vol_ma = sma(vol, length)
     rvol = vol / vol_ma.replace(0, np.nan)
@@ -371,35 +376,222 @@ def adx_dmi(
     return {"ADX": rma(dx, adx_length), "DI_plus": plus_di, "DI_minus": minus_di}
 
 
+
+# --------------------------------------------------------------------------
+# Parabolic SAR
+# --------------------------------------------------------------------------
+
+
+def parabolic_sar(
+    df: pd.DataFrame, af_start: float = 0.02, af_step: float = 0.02, af_max: float = 0.2
+) -> dict[str, pd.Series]:
+    """Wilder Parabolic SAR.
+
+    Nokta fiyatin altindaysa yukari trend (+1), ustundeyse asagi trend (-1).
+    Donus anlarinda SAR, son iki barin ucuna kirpilir; bu kirpma atlanirsa
+    gosterge fiyatin icine girip yanlis sinyal uretir.
+    """
+    high = df["High"].to_numpy(dtype="float64")
+    low = df["Low"].to_numpy(dtype="float64")
+    n = len(df)
+    sar = np.full(n, np.nan)
+    direction = np.full(n, np.nan)
+    if n < 3:
+        return {"SAR": pd.Series(sar, index=df.index), "SAR_dir": pd.Series(direction, index=df.index)}
+
+    up = high[1] >= high[0]
+    af = af_start
+    ep = high[1] if up else low[1]
+    sar[1] = low[0] if up else high[0]
+    direction[1] = 1.0 if up else -1.0
+
+    for i in range(2, n):
+        prev = sar[i - 1]
+        value = prev + af * (ep - prev)
+
+        if up:
+            value = min(value, low[i - 1], low[i - 2])
+            if low[i] < value:  # donus
+                up = False
+                value = ep
+                ep = low[i]
+                af = af_start
+            elif high[i] > ep:
+                ep = high[i]
+                af = min(af + af_step, af_max)
+        else:
+            value = max(value, high[i - 1], high[i - 2])
+            if high[i] > value:
+                up = True
+                value = ep
+                ep = high[i]
+                af = af_start
+            elif low[i] < ep:
+                ep = low[i]
+                af = min(af + af_step, af_max)
+
+        sar[i] = value
+        direction[i] = 1.0 if up else -1.0
+
+    return {"SAR": pd.Series(sar, index=df.index), "SAR_dir": pd.Series(direction, index=df.index)}
+
+
+# --------------------------------------------------------------------------
+# CCI / Williams %R / Awesome Oscillator
+# --------------------------------------------------------------------------
+
+
+def cci(df: pd.DataFrame, length: int = 20) -> dict[str, pd.Series]:
+    """Commodity Channel Index. Ortalama mutlak sapma kullanir (std degil)."""
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3.0
+    ma = sma(tp, length)
+    mad = tp.rolling(length, min_periods=length).apply(
+        lambda w: np.abs(w - w.mean()).mean(), raw=True
+    )
+    return {"CCI": (tp - ma) / (0.015 * mad.replace(0, np.nan))}
+
+
+def williams_r(df: pd.DataFrame, length: int = 14) -> dict[str, pd.Series]:
+    highest = df["High"].rolling(length, min_periods=length).max()
+    lowest = df["Low"].rolling(length, min_periods=length).min()
+    value = -100.0 * (highest - df["Close"]) / (highest - lowest).replace(0, np.nan)
+    return {"WILLR": value}
+
+
+def awesome_oscillator(
+    df: pd.DataFrame, fast: int = 5, slow: int = 34
+) -> dict[str, pd.Series]:
+    hl2 = (df["High"] + df["Low"]) / 2.0
+    return {"AO": sma(hl2, fast) - sma(hl2, slow)}
+
+
+# --------------------------------------------------------------------------
+# ATR paneli / Keltner / Donchian
+# --------------------------------------------------------------------------
+
+
+def atr_bands(df: pd.DataFrame, length: int = 14) -> dict[str, pd.Series]:
+    """Panel olarak cizilen ATR: mutlak deger ve fiyata orani."""
+    value = atr(df, length)
+    return {"ATR": value, "ATR_pct": 100.0 * value / df["Close"].replace(0, np.nan)}
+
+
+def keltner(
+    df: pd.DataFrame, length: int = 20, atr_length: int = 10, mult: float = 2.0
+) -> dict[str, pd.Series]:
+    """Keltner Kanallari: EMA merkez, ATR genislik.
+
+    Bollinger'dan farki sapma yerine ATR kullanmasidir; bantlar daha yumusak
+    olur ve ani volatilite siciramalarinda daha az genisler.
+    """
+    mid = ema(df["Close"], length)
+    band = mult * atr(df, atr_length)
+    return {"KC_mid": mid, "KC_upper": mid + band, "KC_lower": mid - band}
+
+
+def donchian(df: pd.DataFrame, length: int = 20) -> dict[str, pd.Series]:
+    """Donchian Kanallari: N barlik en yuksek ve en dusuk."""
+    upper = df["High"].rolling(length, min_periods=length).max()
+    lower = df["Low"].rolling(length, min_periods=length).min()
+    return {"DC_upper": upper, "DC_lower": lower, "DC_mid": (upper + lower) / 2.0}
+
+
+# --------------------------------------------------------------------------
+# OBV / Volume Profile
+# --------------------------------------------------------------------------
+
+
+def obv(df: pd.DataFrame, signal_length: int = 20) -> dict[str, pd.Series]:
+    """On-Balance Volume: kapanis yukselirse hacmi ekler, duserse cikarir."""
+    direction = np.sign(df["Close"].diff().fillna(0.0))
+    value = (direction * df["Volume"].fillna(0.0)).cumsum()
+    return {"OBV": value, "OBV_ma": ema(value, signal_length)}
+
+
+def volume_profile(df: pd.DataFrame, bins: int = 48) -> dict[str, pd.Series]:
+    """Hacmi zamana degil FIYAT SEVIYELERINE dagitir (VPVR).
+
+    Donen Series'in indeksi fiyat kovasinin merkezi, degeri o seviyede
+    birikmis hacimdir. Zaman eksenli olmadigi icin diger serilerle birlikte
+    yeniden indekslenemez; pipeline bunu ayrica ele alir.
+
+    Her barin hacmi, barin yuksek-dusuk araligina esit dagitilir; boylece
+    yalnizca kapanisa bakan kaba yaklasimdan daha gercekci bir profil cikar.
+    """
+    low = float(df["Low"].min())
+    high = float(df["High"].max())
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        return {"VP_hist": pd.Series(dtype="float64")}
+
+    edges = np.linspace(low, high, bins + 1)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    totals = np.zeros(bins)
+
+    lows = df["Low"].to_numpy(dtype="float64")
+    highs = df["High"].to_numpy(dtype="float64")
+    vols = df["Volume"].fillna(0.0).to_numpy(dtype="float64")
+
+    for lo, hi, vol in zip(lows, highs, vols):
+        if not np.isfinite(lo) or not np.isfinite(hi) or vol <= 0:
+            continue
+        start = np.searchsorted(edges, lo, side="right") - 1
+        end = np.searchsorted(edges, hi, side="left")
+        start = max(start, 0)
+        end = min(max(end, start + 1), bins)
+        totals[start:end] += vol / (end - start)
+
+    return {"VP_hist": pd.Series(totals, index=pd.Index(centers, name="price"))}
+
+
 # --------------------------------------------------------------------------
 # Toplu hesaplama
 # --------------------------------------------------------------------------
 
 #: Tum gostergelerin kanonik sirasi. CLI'daki --indicators bu anahtarlari alir.
 ALL_INDICATORS: tuple[str, ...] = (
-    "ma",
-    "bbands",
-    "supertrend",
-    "ichimoku",
-    "vwap",
-    "volume",
-    "rsi",
-    "macd",
-    "stochrsi",
-    "adx",
+    # Trend
+    "ma", "supertrend", "ichimoku", "sar", "adx",
+    # Momentum
+    "rsi", "macd", "stochrsi", "cci", "willr", "ao",
+    # Volatilite
+    "bbands", "atr", "keltner", "donchian",
+    # Hacim
+    "volume", "vwap", "obv", "vprofile",
 )
+
+#: Gostergenin ait oldugu kategori. Kareler her kategoriden birer tane secer.
+CATEGORY: dict[str, str] = {
+    "ma": "trend", "supertrend": "trend", "ichimoku": "trend", "sar": "trend", "adx": "trend",
+    "rsi": "momentum", "macd": "momentum", "stochrsi": "momentum",
+    "cci": "momentum", "willr": "momentum", "ao": "momentum",
+    "bbands": "volatilite", "atr": "volatilite", "keltner": "volatilite", "donchian": "volatilite",
+    "volume": "hacim", "vwap": "hacim", "obv": "hacim", "vprofile": "hacim",
+}
+
+#: Zaman eksenli olmayan gostergeler (fiyat seviyesine gore hesaplananlar).
+#: Pencere kirpildiktan SONRA hesaplanmalari gerekir.
+NON_TEMPORAL: frozenset[str] = frozenset({"vprofile"})
 
 _COMPUTE = {
     "ma": moving_averages,
-    "bbands": bollinger,
     "supertrend": supertrend,
     "ichimoku": ichimoku,
-    "vwap": vwap,
-    "volume": volume_profile,
+    "sar": parabolic_sar,
+    "adx": adx_dmi,
     "rsi": rsi,
     "macd": macd,
     "stochrsi": stoch_rsi,
-    "adx": adx_dmi,
+    "cci": cci,
+    "willr": williams_r,
+    "ao": awesome_oscillator,
+    "bbands": bollinger,
+    "atr": atr_bands,
+    "keltner": keltner,
+    "donchian": donchian,
+    "volume": volume_bars,
+    "vwap": vwap,
+    "obv": obv,
+    "vprofile": volume_profile,
 }
 
 

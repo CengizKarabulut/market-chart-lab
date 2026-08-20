@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from src import indicators as ind
@@ -77,19 +78,54 @@ class TestViews(unittest.TestCase):
             self.assertTrue(set(view.keys) <= valid, f"{view.key}: {set(view.keys) - valid}")
             self.assertTrue(set(view.compute_keys) <= set(ind.ALL_INDICATORS), view.key)
 
-    def test_views_cover_all_ten_indicators(self) -> None:
-        from src.views import VIEWS
+    def test_grid_views_take_one_indicator_per_category(self) -> None:
+        """Her kare dort kategoriden BIRER gosterge tasimali."""
+        from src.views import GRID_SET, VIEWS_BY_KEY
 
-        covered = {k for v in VIEWS for k in v.compute_keys}
-        self.assertEqual(covered, set(ind.ALL_INDICATORS))
+        for key in GRID_SET:
+            view = VIEWS_BY_KEY[key]
+            categories = [ind.CATEGORY[k] for k in view.compute_keys]
+            self.assertEqual(sorted(categories),
+                             ["hacim", "momentum", "trend", "volatilite"], key)
+
+    def test_grid_views_do_not_repeat_a_display(self) -> None:
+        from src.views import GRID_SET, VIEWS_BY_KEY
+
+        used = [k for key in GRID_SET for k in VIEWS_BY_KEY[key].keys]
+        self.assertEqual(len(used), len(set(used)), "ayni gosterim birden fazla karede")
+
+    def test_grid_views_have_one_overlay_and_three_panels(self) -> None:
+        """Izgaranin temel kurali: mum grafiginde TEK gosterge, altinda UC panel.
+
+        Fiyat panelinde birden fazla katman ust uste binince grafik okunmaz
+        hale geliyordu; bu test o duzenin bozulmasini engeller.
+        """
+        from src.plotspec import _OVERLAY_BUILDERS, _PANEL_BUILDERS
+        from src.views import GRID_SET, VIEWS_BY_KEY
+
+        for key in GRID_SET:
+            view = VIEWS_BY_KEY[key]
+            overlays = [k for k in view.keys if k in _OVERLAY_BUILDERS]
+            panels = [k for k in view.keys if k in _PANEL_BUILDERS]
+            self.assertEqual(len(overlays), 1, f"{key}: fiyat ustunde {overlays}")
+            self.assertEqual(len(panels), 3, f"{key}: paneller {panels}")
+
+    def test_grid_tiles_have_equal_height(self) -> None:
+        """Ayni panel sayisi -> ayni yukseklik -> izgarada hizali karolar."""
+        from src.views import GRID_SET, VIEWS_BY_KEY
+
+        heights = {
+            (VIEWS_BY_KEY[k].price_height, len(VIEWS_BY_KEY[k].keys)) for k in GRID_SET
+        }
+        self.assertEqual(len(heights), 1, "karolar farkli yukseklikte")
 
     def test_resolve_views(self) -> None:
         from src.views import DEFAULT_SET, VIEWS, resolve_views
 
         self.assertEqual(len(resolve_views("all")), len(VIEWS))
         self.assertEqual(len(resolve_views("set")), len(DEFAULT_SET))
-        self.assertEqual([v.key for v in resolve_views("momentum,bollinger")],
-                         ["momentum", "bollinger"])
+        self.assertEqual([v.key for v in resolve_views("klasik,trend")],
+                         ["klasik", "trend"])
         with self.assertRaises(KeyError):
             resolve_views("yok")
 
@@ -102,13 +138,15 @@ class TestViews(unittest.TestCase):
 
 class TestRenderers(unittest.TestCase):
     def setUp(self) -> None:
+        self.keys = ("ma", "bbands", "supertrend", "ichimoku", "vwap",
+                     "volume", "rsi", "macd", "stochrsi", "adx")
         self.df = synthetic_ohlcv(320)
-        series = ind.compute(self.df)
+        series = ind.compute(self.df, keys=self.keys)
         df, series = extend_future(self.df, series, 25)
-        self.spec = build_spec(df, series, ind.ALL_INDICATORS, "TEST", "sentetik veri",
-                               note="tum gostergeler")
+        self.spec = build_spec(df, series, self.keys, "TEST", "sentetik veri",
+                               note="genel bakis")
 
-    def test_spec_has_five_panels_and_overlays(self) -> None:
+    def test_spec_panels_follow_key_order(self) -> None:
         self.assertEqual([p.key for p in self.spec.panels],
                          ["volume", "rsi", "macd", "stochrsi", "adx"])
         self.assertGreaterEqual(len(self.spec.overlays), 8)
@@ -175,7 +213,8 @@ class TestCLIArgs(unittest.TestCase):
         from src.cli import parse_args
 
         args = parse_args(["--symbol", "THYAO"])
-        self.assertEqual((args.interval, args.bars, args.theme), ("1d", 250, "ink"))
+        self.assertEqual((args.interval, args.bars, args.theme), ("1d", 250, "tv"))
+        self.assertEqual(args.grid, 2)
 
 
 class TestPipelineViews(unittest.TestCase):
@@ -203,13 +242,21 @@ class TestPipelineViews(unittest.TestCase):
         self.assertEqual(len(result), len(views))
         self.assertEqual([r.key for r in result], [v.key for v in views])
 
-    def test_only_ichimoku_views_are_extended(self) -> None:
+    def test_all_views_share_one_x_range(self) -> None:
+        """Izgarada karolarin x eksenleri hizali olmali."""
         from src.views import resolve_views
 
-        result = self.pipeline.build_views("TEST", resolve_views("momentum,ichimoku"), bars=200)
-        momentum, ichimoku = result.results
-        self.assertEqual(len(momentum.spec.df), 200)
-        self.assertEqual(len(ichimoku.spec.df), 225)
+        result = self.pipeline.build_views("TEST", resolve_views("grid"), bars=200)
+        lengths = {len(r.spec.df) for r in result}
+        self.assertEqual(len(lengths), 1, "kareler farkli x araligina sahip")
+        # Ichimoku iceren set 25 bar ileri uzatilir
+        self.assertEqual(lengths.pop(), 225)
+
+    def test_set_without_cloud_is_not_extended(self) -> None:
+        from src.views import resolve_views
+
+        result = self.pipeline.build_views("TEST", resolve_views("klasik,trend"), bars=200)
+        self.assertEqual({len(r.spec.df) for r in result}, {200})
 
     def test_snapshot_identical_across_views(self) -> None:
         """Ayni bar, ayni ozet: kareler arasinda tutarsiz rakam gorunmemeli."""
@@ -220,3 +267,243 @@ class TestPipelineViews(unittest.TestCase):
         for other in result.results[1:]:
             values = dict((label, value) for label, value, _ in other.spec.snapshot)
             self.assertEqual(first["Son"], values["Son"], other.key)
+
+
+
+class TestCompose(unittest.TestCase):
+    def test_grid_dimensions_and_row_alignment(self) -> None:
+        """Farkli yukseklikteki karolar satir bazinda hizalanmali."""
+        from PIL import Image
+
+        from src.compose import compose_grid
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i, height in enumerate((400, 500, 420, 420)):
+                path = Path(tmp) / f"t{i}.png"
+                Image.new("RGB", (600, height), "#101010").save(path)
+                paths.append(path)
+
+            out = compose_grid(paths, Path(tmp) / "grid.png", get_theme("tv"),
+                               columns=2, title="TEST", subtitle="alt")
+            with Image.open(out) as im:
+                # 2 sutun x 600 + bosluklar + kenar paylari
+                self.assertEqual(im.width, 22 * 2 + 600 * 2 + 18)
+                # satir yukseklikleri: max(400,500)=500, max(420,420)=420
+                self.assertEqual(im.height, 22 * 2 + 78 + 500 + 420 + 18)
+
+    def test_grid_rejects_empty_input(self) -> None:
+        from src.compose import compose_grid
+
+        with self.assertRaises(ValueError):
+            compose_grid([], "x.png", get_theme("tv"))
+
+
+class TestFrameShape(unittest.TestCase):
+    """Izgara karelerinin yapisal kurali: mum panelinde TEK gosterge."""
+
+    def test_one_overlay_and_three_panels(self) -> None:
+        from src.plotspec import _OVERLAY_BUILDERS, _PANEL_BUILDERS
+        from src.views import GRID_SET, VIEWS_BY_KEY
+
+        for key in GRID_SET:
+            view = VIEWS_BY_KEY[key]
+            overlays = [k for k in view.keys if k in _OVERLAY_BUILDERS]
+            panels = [k for k in view.keys if k in _PANEL_BUILDERS]
+            self.assertEqual(len(overlays), 1, f"{key}: mum panelinde {len(overlays)} gosterge")
+            self.assertEqual(len(panels), 3, f"{key}: {len(panels)} alt panel")
+
+    def test_rendered_spec_matches_the_rule(self) -> None:
+        """Kural tanimda degil, uretilen ChartSpec'te de gecerli olmali."""
+        import src.pipeline as pipeline
+        from src.data_sources import SymbolSpec
+        from src.views import resolve_views
+
+        original = pipeline.fetch_ohlcv
+        pipeline.fetch_ohlcv = lambda symbol, period="1y", interval="1d", bars=None: (
+            synthetic_ohlcv(520, seed=5),
+            SymbolSpec(symbol, "borsapy", "TEST", "bist", "TEST"),
+        )
+        try:
+            result = pipeline.build_views("TEST", resolve_views("grid"), bars=150)
+            for item in result:
+                self.assertEqual(len(item.spec.panels), 3, item.key)
+        finally:
+            pipeline.fetch_ohlcv = original
+
+
+class TestTelegramPayload(unittest.TestCase):
+    """Istek govdesini agsiz dogrular: requests.post yakalanir."""
+
+    def _capture(self, env: dict) -> dict:
+        import os
+        from unittest import mock
+
+        from src import telegram
+
+        captured: dict = {}
+
+        class FakeResponse:
+            status_code = 200
+            content = b"{}"
+
+            @staticmethod
+            def json() -> dict:
+                return {"ok": True, "result": {}}
+
+        def fake_post(url, data=None, files=None, timeout=None):
+            captured["url"] = url
+            captured["data"] = data
+            captured["files"] = files
+            return FakeResponse()
+
+        with mock.patch.dict(os.environ, env, clear=False), \
+                mock.patch.object(telegram.requests, "post", fake_post), \
+                tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.png"
+            path.write_bytes(b"\x89PNG\r\n")
+            telegram.send_document(path, "başlık")
+        return captured
+
+    def test_topic_id_is_sent_as_message_thread_id(self) -> None:
+        captured = self._capture({
+            "TELEGRAM_BOT_TOKEN": "123:ABC",
+            "TELEGRAM_CHAT_ID": "-1003502567927",
+            "TELEGRAM_TOPIC_ID": "18",
+        })
+        self.assertEqual(captured["data"]["chat_id"], "-1003502567927")
+        self.assertEqual(captured["data"]["message_thread_id"], "18")
+        self.assertIn("sendDocument", captured["url"])
+
+    def test_topic_id_omitted_when_unset(self) -> None:
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_TOPIC_ID": ""}, clear=False):
+            captured = self._capture({
+                "TELEGRAM_BOT_TOKEN": "123:ABC",
+                "TELEGRAM_CHAT_ID": "-100999",
+                "TELEGRAM_TOPIC_ID": "",
+            })
+        self.assertNotIn("message_thread_id", captured["data"])
+
+    def test_missing_credentials_raise(self) -> None:
+        import os
+        from unittest import mock
+
+        from src.telegram import TelegramError, send_photo
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "",
+                                          "TELEGRAM_CHAT_ID": ""}, clear=False):
+            with self.assertRaises(TelegramError):
+                send_photo("yok.png")
+
+
+class TestOpenBarAndScale(unittest.TestCase):
+    def test_open_bar_detection(self) -> None:
+        from src.pipeline import last_bar_is_open
+
+        idx = pd.bdate_range("2026-08-10", periods=9)  # son bar 20.08 00:00
+        self.assertTrue(last_bar_is_open(idx, pd.Timestamp("2026-08-20 12:27")))
+        self.assertFalse(last_bar_is_open(idx, pd.Timestamp("2026-08-21 09:00")))
+        # Hafta sonu: cuma bari kapanmis sayilir
+        self.assertFalse(last_bar_is_open(pd.bdate_range("2026-08-10", periods=5),
+                                          pd.Timestamp("2026-08-16 12:00")))
+
+    def test_open_bar_needs_enough_history(self) -> None:
+        from src.pipeline import last_bar_is_open
+
+        self.assertFalse(last_bar_is_open(pd.DatetimeIndex(["2026-08-20"])))
+
+    def test_log_scale_triggers_on_wide_range(self) -> None:
+        from src.plotspec import needs_log_scale
+
+        narrow = synthetic_ohlcv(200, seed=4)
+        self.assertFalse(needs_log_scale(narrow))
+
+        wide = narrow.copy()
+        wide[["Open", "High", "Low", "Close"]] *= np.exp(
+            np.linspace(0, 2.5, len(wide))
+        )[:, None]
+        self.assertTrue(needs_log_scale(wide))
+
+    def test_explicit_scale_overrides_auto(self) -> None:
+        from src.plotspec import build_spec
+
+        df = synthetic_ohlcv(200, seed=4)
+        series = ind.compute(df, keys=("ma",))
+        self.assertTrue(build_spec(df, series, ("ma",), "T", "s", log_price=True).log_price)
+        self.assertFalse(build_spec(df, series, ("ma",), "T", "s", log_price=False).log_price)
+
+    def test_scale_flag_mapping(self) -> None:
+        from src.cli import _scale
+
+        self.assertIsNone(_scale("auto"))
+        self.assertTrue(_scale("log"))
+        self.assertFalse(_scale("linear"))
+
+
+class TestOutlierClipping(unittest.TestCase):
+    def test_single_spike_sets_a_cap(self) -> None:
+        from src.plotspec import clip_outliers
+
+        rng = np.random.default_rng(1)
+        series = pd.Series(list(rng.lognormal(13, 0.3, 200)) + [5e8])
+        cap, exceeding = clip_outliers(series)
+        self.assertTrue(np.isfinite(cap))
+        self.assertGreaterEqual(exceeding, 1)
+        self.assertLess(cap, float(series.max()))
+
+    def test_even_series_is_not_clipped(self) -> None:
+        from src.plotspec import clip_outliers
+
+        series = pd.Series(np.random.default_rng(2).normal(100, 3, 200))
+        cap, exceeding = clip_outliers(series)
+        self.assertTrue(np.isnan(cap))
+        self.assertEqual(exceeding, 0)
+
+    def test_short_series_is_not_clipped(self) -> None:
+        from src.plotspec import clip_outliers
+
+        self.assertEqual(clip_outliers(pd.Series([1.0, 2.0, 900.0]))[1], 0)
+
+    def test_volume_panel_reports_clipping(self) -> None:
+        from src.plotspec import _volume_panel
+
+        df = synthetic_ohlcv(200, seed=6)
+        df.iloc[-3, df.columns.get_loc("Volume")] = float(df["Volume"].max()) * 60
+        series = ind.compute(df, keys=("volume",))
+        panel = _volume_panel(df, series)
+        self.assertIn("kırpıldı", panel.params)
+        self.assertIsNotNone(panel.yrange)
+        # Kirpilan bar farkli renkte isaretlenmeli
+        self.assertIn("accent2", list(panel.traces[0].colors))
+
+
+class TestPanelClippingApplied(unittest.TestCase):
+    """Kirpma mantigi panellere GERCEKTEN baglanmis mi.
+
+    clip_outliers dogru calisip panel onu kullanmazsa kirpma sessizce
+    devre disi kalir; bu test o durumu yakalar.
+    """
+
+    def setUp(self) -> None:
+        df = synthetic_ohlcv(300, seed=17)
+        df.iloc[-120, df.columns.get_loc("Volume")] *= 45
+        self.df = df
+        self.series = ind.compute(df, keys=("volume",))
+
+    def test_rvol_panel_uses_cap(self) -> None:
+        from src.plotspec import _rvol_panel
+
+        panel = _rvol_panel(self.series)
+        self.assertIsNotNone(panel.yrange, "RVOL paneli kirpma uygulamiyor")
+        self.assertLess(panel.yrange[1], float(self.series["RVOL"].max()))
+        self.assertIn("kırpıldı", panel.params)
+
+    def test_volume_panel_uses_cap(self) -> None:
+        from src.plotspec import _volume_panel
+
+        panel = _volume_panel(self.df, self.series)
+        self.assertIsNotNone(panel.yrange, "Hacim paneli kirpma uygulamiyor")
+        self.assertLess(panel.yrange[1], float(self.series["VOL"].max()))

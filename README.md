@@ -17,59 +17,91 @@ meşgul etmez.
 
 ## Göstergeler
 
-Toplam 10 gösterge; biri hareketli ortalama ailesi, dokuzu diğer türlerden.
+Dört kategoriden toplam 19 gösterge. Kareler her kategoriden birer tane seçer.
 
-| # | Anahtar | Gösterge | Yer |
-|---|---------|----------|-----|
-| 1 | `ma` | EMA 20 / EMA 50 / SMA 200 | fiyat üstü |
-| 2 | `bbands` | Bollinger Bantları 20/2 | fiyat üstü |
-| 3 | `supertrend` | Supertrend 10/3 (yöne göre renk değiştirir) | fiyat üstü |
-| 4 | `ichimoku` | Ichimoku bulutu 9/26/52 | fiyat üstü |
-| 5 | `vwap` | VWAP + standart sapma bandı | fiyat üstü |
-| 6 | `volume` | Hacim + 20 barlık ortalama (RVOL) | alt panel |
-| 7 | `rsi` | RSI 14 (Wilder) + sinyal ortalaması | alt panel |
-| 8 | `macd` | MACD 12/26/9 + histogram | alt panel |
-| 9 | `stochrsi` | Stochastic RSI 14/14/3/3 | alt panel |
-| 10 | `adx` | ADX / DMI 14 | alt panel |
+| Kategori | Göstergeler |
+|---|---|
+| **Trend** | EMA/SMA, Supertrend, Ichimoku, Parabolic SAR, ADX/DMI |
+| **Momentum** | RSI, MACD, Stochastic RSI, CCI, Williams %R, Awesome Oscillator |
+| **Volatilite** | Bollinger, ATR, Keltner, Donchian |
+| **Hacim** | Hacim/RVOL, VWAP, OBV, Volume Profile (VPVR) |
 
 Wilder yumuşatması (`rma`) kullanan göstergelerde TradingView ile aynı sonuç hedeflenmiştir.
-İki ayrıntı özellikle önemsenmiştir:
+Dört ayrıntı özellikle önemsenmiştir:
 
-- **Ichimoku kaydırması** TradingView'daki gibi `displacement - 1` bardır (varsayılan 26 ayarında 25 bar).
-  Bu atlanırsa bulut bir bar kayar.
-- **VWAP çapası** aralığa göre seçilir: gün içi barlarda seans başında sıfırlanan kümülatif VWAP,
-  günlük ve üzeri barlarda 20 barlık hareketli VWAP. Günlük barda seans çapası kullanılırsa
-  her grup tek bardan oluşacağı için VWAP fiyatın kendisine eşitlenir ve gösterge anlamsızlaşır.
+- **Ichimoku kaydırması** TradingView'daki gibi `displacement - 1` bardır (varsayılan 26
+  ayarında 25 bar). Bu atlanırsa bulut bir bar kayar.
+- **VWAP çapası** aralığa göre seçilir: gün içi barlarda seans başında sıfırlanan kümülatif
+  VWAP, günlük ve üzeri barlarda 20 barlık hareketli VWAP. Günlük barda seans çapası
+  kullanılırsa her grup tek bardan oluşacağı için VWAP fiyata eşitlenir.
+- **Parabolic SAR** dönüş anlarında son iki barın ucuna kırpılır; bu kırpma atlanırsa
+  gösterge fiyatın içine girip yanlış sinyal üretir.
+- **Volume Profile** her barın hacmini yüksek–düşük aralığına eşit dağıtır (yalnızca
+  kapanışa bakmaz) ve **görünen pencereden** hesaplanır, tüm geçmişten değil.
 
 ---
 
-## Kareler (görünümler)
+## Kareler ve ızgara
 
-Varsayılan çalıştırma altı kare üretir. Her kare ayrı bir PNG'dir; hepsi **aynı genişlikte**
-olduğu için Telegram albümünde hizalı durur.
+Varsayılan çalıştırma dört kare üretip **tek bir görselde 2×2 ızgara** olarak birleştirir.
 
-| Görünüm | Karede ne var |
-|---------|---------------|
-| `ortalamalar` | Fiyat + EMA20/EMA50/SMA200 · hacim |
-| `bollinger` | Bantlar + %B konumu + bant genişliği (sıkışma eşiği ile) |
-| `momentum` | Fiyat + RSI · MACD · Stochastic RSI aynı karede |
-| `supertrend` | Supertrend + ADX/DMI + hacim |
-| `ichimoku` | Bulut (25 bar ileri taşınmış) + ADX |
-| `hacim` | VWAP + bandı · hacim · RVOL |
-| `tumu` | On göstergenin tamamı tek karede (varsayılan sette yok) |
+**Her karenin yapısı aynı: mum grafiğinin üstünde TEK gösterge, altında kendi ölçeğine
+sahip ÜÇ panel.** Fiyat panelinde birden fazla katman üst üste binince grafik okunmaz hale
+geliyor; bu kural bir testle korunuyor.
+
+| Kare | Fiyat üstünde | Panel 1 | Panel 2 | Panel 3 |
+|---|---|---|---|---|
+| Klasik | EMA/SMA *(trend)* | RSI *(momentum)* | Bollinger %B *(volatilite)* | Hacim *(hacim)* |
+| Trend takip | Supertrend *(trend)* | MACD *(momentum)* | ATR *(volatilite)* | OBV *(hacim)* |
+| Bulut ve kanal | Ichimoku *(trend)* | Stoch RSI *(momentum)* | Keltner konumu *(volatilite)* | VWAP sapması *(hacim)* |
+| Kırılım ve dönüş | Parabolic SAR *(trend)* | CCI *(momentum)* | Donchian konumu *(volatilite)* | RVOL *(hacim)* |
+
+Doğası gereği fiyat üstüne binen volatilite göstergeleri panel biçimine çevrilmiştir:
+Bollinger yerine **%B** (fiyatın bantlar içindeki konumu), Keltner yerine **kanal içi konum**
+(0 = orta bant, ±1 = bantlar), Donchian yerine **kanal yüzdesi** (0 = dip, 100 = tepe),
+VWAP yerine **yüzde sapma**. Böylece bilgi kaybolmadan mum grafiği temiz kalır.
+
+Beşinci bir kare de var: `profil` (Volume Profile + Williams %R + bant genişliği + ADX).
+Varsayılan sette değil, `--views profil` ile çağrılır.
 
 ```bash
-python -m src.cli --symbol THYAO                      # 6 kare
-python -m src.cli --symbol THYAO --views all          # 7 kare (tumu dahil)
-python -m src.cli --symbol THYAO --views momentum     # tek kare
-python -m src.cli --symbol THYAO --views bollinger,ichimoku
+python -m src.cli --symbol THYAO                  # 2x2 izgara, tek PNG
+python -m src.cli --symbol THYAO --grid 4         # 1x4 yan yana
+python -m src.cli --symbol THYAO --grid 0         # birlestirme yok, ayri PNG'ler
+python -m src.cli --symbol THYAO --views klasik   # tek kare
+python -m src.cli --symbol THYAO --views tumu     # on gosterge tek karede
 ```
 
-Tüm kareler **tek veri çekimi ve tek hesap turuyla** üretilir: birden fazla karede geçen
-göstergeler (örneğin hareketli ortalamalar) yalnızca bir kez hesaplanır.
+Bir setteki tüm kareler **aynı x aralığını** paylaşır; Ichimoku projeksiyonu varsa hepsine
+uygulanır, böylece ızgarada karolar hizalı durur.
 
-HTML tarafında altı ayrı dosya değil, **sekmeli tek sayfa** oluşur; kareler arasında
-sekmelerle geçilir ve plotly.js yalnızca bir kez yüklenir.
+Tüm kareler tek veri çekimi ve tek hesap turuyla üretilir.
+
+### Veriyi dürüst gösteren üç davranış
+
+**Tamamlanmamış son bar.** Seans açıkken çekilen veride son bar hâlâ oluşuyordur; RVOL,
+RSI ve günlük değişim gün kapanınca değişir. Yarım seansta RVOL doğal olarak 1'in çok
+altında görünür ve bu yanıltıcıdır. Bar süresi (barlar arası medyan fark) son barın
+başlangıcına eklendiğinde gelecekte kalıyorsa bar açık sayılır: başlıkta `SON BAR AÇIK`
+uyarısı çıkar, kare künyesine `● bar açık` eklenir ve o mum soluk çizilir.
+
+**Logaritmik fiyat ekseni.** 100'den 700'e çıkan bir seride lineer eksen ilk ayları ezer.
+Görünen aralıkta yüksek/düşük oranı 4'ü aşarsa eksen otomatik log'a geçer; `--scale log`
+veya `--scale linear` ile zorlanabilir.
+
+**Aykırı hacim kırpma.** Tek bir devasa hacim barı panelin geri kalanını düz çizgiye
+çevirir. Tavan 95. yüzdeliğe göre belirlenir, tavanı aşan barlar mor renkle işaretlenir ve
+panel başlığında `3 bar kırpıldı` yazar — aykırı değer gizlenmez, sadece ölçek okunur olur.
+
+### Görünüm
+
+Tema TradingView'ın koyu düzenine yakındır: fiyat ekseni sağda, her işaretli serinin son
+değeri kendi renginde bir kutucuk olarak sağ kenarda, panellerin sol üstünde `RSI (14) 56,10`
+biçiminde satır içi künye. Sayılar Türkçe biçimlenir (`1.234,56`), ay adları Türkçedir.
+Bunlar `locale` ayarından bağımsız yapılır; GitHub Actions'ta Türkçe locale kurulu olmayabilir.
+
+Sağdaki değer etiketleri çakışırsa dikeyde itilir — etiketteki **sayı değişmez**, yalnızca
+çizim konumu kayar.
 
 ---
 
@@ -130,9 +162,11 @@ Listede olmayan bir kodu tek seferlik kullanmak için `bist:` öneki yeterlidir.
 | `--interval` | `1d` | `1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo` |
 | `--bars` | `250` | Grafikte gösterilecek bar sayısı |
 | `--period` | aralığa göre | Çekilecek geçmiş; göstergeler tüm geçmişte hesaplanıp sonra kırpılır |
-| `--views` | `set` | `set` (6 kare), `all` (7 kare) veya virgüllü görünüm listesi |
+| `--views` | `set` | `set` (4 kare ızgara), `all` (tümü) veya virgüllü görünüm listesi |
+| `--grid` | `2` | Izgara sütun sayısı. `0` = birleştirme yok |
 | `--indicators` | — | Görünüm yerine serbest gösterge listesi; tek kare üretir |
-| `--theme` | `ink` | `ink` (koyu) veya `paper` (açık) |
+| `--scale` | `auto` | `auto` (oran 4'ü aşarsa log), `log`, `linear` |
+| `--theme` | `tv` | `tv` (TradingView koyu), `ink`, `paper` (açık) |
 | `--project-bars` | `25` | Ichimoku bulutunun fiyatın kaç bar önüne taşınacağı |
 | `--embed-js` | kapalı | Plotly'yi HTML içine gömer; çevrimdışı açılır (~3 MB) |
 
@@ -143,6 +177,8 @@ Listede olmayan bir kodu tek seferlik kullanmak için `bist:` öneki yeterlidir.
 ```
 src/
   views.py          kare tanımları: hangi göstergeler hangi karede
+  compose.py        kareleri tek görselde ızgaraya dizen katman
+  format.py         Türkçe sayı ve tarih biçimleme (locale'den bağımsız)
   data_sources.py   sembol çözümleme + borsapy/yfinance yönlendirme ve yedekleme
   bist_symbols.py   BIST kod listesi (tazelenebilir)
   indicators.py     10 göstergenin saf pandas hesabı — çizim bağımlılığı yok
@@ -168,13 +204,33 @@ Bu sayede hafta sonu ve tatil boşlukları oluşmaz ve iki çıktı bar bar ört
 ```bash
 export TELEGRAM_BOT_TOKEN="123456:ABC..."
 export TELEGRAM_CHAT_ID="-100..."
+export TELEGRAM_TOPIC_ID="18"        # istege bagli, forum gruplari icin
 python -m src.cli --symbol THYAO --telegram
 ```
+
+Windows PowerShell'de:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN = "123456:ABC..."
+$env:TELEGRAM_CHAT_ID   = "-1003502567927"
+$env:TELEGRAM_TOPIC_ID  = "18"
+python -m src.cli --symbol THYAO --telegram
+```
+
+**Konu (topic) numarası:** grup forum modundaysa mesajın doğru konuya düşmesi için
+`message_thread_id` gerekir. Numara `web.telegram.org` bağlantısının sonundaki sayıdır:
+`https://web.telegram.org/a/#-1003502567927_18` → chat id `-1003502567927`, konu `18`.
+Boş bırakılırsa mesaj grubun genel akışına gider.
+
+Izgara görseli **dosya olarak** gönderilir. Fotoğraf olarak gönderilseydi Telegram uzun
+kenarı ~1280 piksele indirir ve künyelerdeki rakamlar okunmaz hale gelirdi.
 
 ## GitHub Actions
 
 `Actions → Grafik Üret → Run workflow` ile sembol, aralık ve kare seti seçilerek çalıştırılır.
-Çıktılar hem artifact olarak yüklenir hem de istenirse Telegram'a gönderilir.
+Çıktılar hem artifact olarak yüklenir hem de istenirse Telegram'a gönderilir. Izgara görseli
+geniş olduğu için Telegram'a **dosya olarak** gönderilir; fotoğraf olarak gönderilse Telegram
+uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 `TELEGRAM_BOT_TOKEN` ve `TELEGRAM_CHAT_ID` depo secret'ı olarak tanımlanmalıdır.
 
 ## Testler
@@ -183,11 +239,15 @@ python -m src.cli --symbol THYAO --telegram
 python -m unittest discover -s tests -t .
 ```
 
-39 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
-elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla ve MACD histogramını
-kimlik bağıntısıyla doğrular. Kare testleri her görünümün geçerli anahtar kullandığını,
-yedi karenin on göstergenin tamamını kapsadığını ve kareler arasında özet rakamların
-tutarlı kaldığını kontrol eder.
+71 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
+bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
+doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir
+göstergenin tekrar etmediğini, karoların aynı x aralığını paylaştığını ve **mum panelinde
+tek gösterge + üç alt panel** kuralının hem tanımda hem üretilen `ChartSpec`'te geçerli
+olduğunu kontrol eder. Ayrıca kırpma mantığının panellere gerçekten bağlandığını doğrulayan
+testler vardır: `clip_outliers` doğru çalışıp panel onu kullanmazsa kırpma sessizce devre
+dışı kalırdı.
 
 ---
 

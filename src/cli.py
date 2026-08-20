@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import indicators as ind
 from .pipeline import DEFAULT_PERIODS, build_chart, build_views
+from .compose import compose_grid
 from .render_html import render_html
 from .render_png import render_png
 from .theme import get_theme
@@ -42,7 +43,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Grafikte gosterilecek bar sayisi (varsayilan 250)")
     parser.add_argument("--period", default=None,
                         help="Cekilecek gecmis (1mo, 1y, 5y, max). Bos ise araliga gore secilir.")
-    parser.add_argument("--theme", default="ink", choices=["ink", "paper"])
+    parser.add_argument("--scale", default="auto", choices=["auto", "log", "linear"],
+                        help="Fiyat ekseni. auto: aralik 4 kati asarsa log")
+    parser.add_argument("--theme", default="tv", choices=["tv", "ink", "paper"])
+    parser.add_argument("--grid", type=int, default=2, metavar="SUTUN",
+                        help="Kareleri tek gorselde birlestir (sutun sayisi). "
+                             "0 = birlestirme, kareler ayri PNG kalir.")
     parser.add_argument("--outdir", "-o", default="out", help="Cikti klasoru")
     parser.add_argument("--width", type=int, default=1600,
                         help="PNG genisligi (piksel). Tum kareler ayni genislikte uretilir.")
@@ -56,6 +62,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--telegram", action="store_true",
                         help="PNG'leri albüm, HTML'i dosya olarak Telegram'a gonder")
     return parser.parse_args(argv)
+
+
+def _scale(value: str) -> bool | None:
+    """'auto' -> None (veriye gore karar), 'log' -> True, 'linear' -> False."""
+    return {"auto": None, "log": True, "linear": False}[value]
 
 
 def resolve_keys(raw: str) -> tuple[str, ...]:
@@ -79,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         view_set = build_chart(
             symbol=args.symbol, interval=args.interval, bars=args.bars,
             period=args.period, keys=resolve_keys(args.indicators),
-            project_bars=args.project_bars,
+            project_bars=args.project_bars, log_price=_scale(args.scale),
         )
     else:
         try:
@@ -89,18 +100,34 @@ def main(argv: list[str] | None = None) -> int:
         view_set = build_views(
             symbol=args.symbol, views=views, interval=args.interval,
             bars=args.bars, period=args.period, project_bars=args.project_bars,
+            log_price=_scale(args.scale),
         )
 
     outdir = Path(args.outdir)
     stem = f"{view_set.symbol.display.replace('-', '_')}_{args.interval}"
     png_paths: list[Path] = []
 
+    grid_path: Path | None = None
     if not args.no_png:
-        # Kareler ayni genislikte uretilir; Telegram albumunde hizali dursun diye.
+        use_grid = args.grid > 0 and len(view_set) > 1
+        tiles: list[Path] = []
         for i, result in enumerate(view_set, start=1):
             path = outdir / f"{stem}_{i:02d}_{result.key}.png"
-            render_png(result.spec, theme, path, width_px=args.width, dpi=args.dpi)
-            png_paths.append(path)
+            # Izgara karolarinda ust serit cizilmez; kimlik satir ici kunyede.
+            render_png(result.spec, theme, path, width_px=args.width,
+                       dpi=args.dpi, compact=use_grid)
+            tiles.append(path)
+
+        if use_grid:
+            grid_path = outdir / f"{stem}_izgara.png"
+            compose_grid(
+                tiles, grid_path, theme, columns=args.grid,
+                title=f"{view_set.symbol.display}",
+                subtitle=f"{view_set.subtitle} · {view_set.generated_at}",
+            )
+            png_paths = [grid_path]
+        else:
+            png_paths = tiles
 
     html_path = outdir / f"{stem}.html"
     if not args.no_html:
@@ -126,7 +153,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         if png_paths:
             if len(png_paths) == 1:
-                send_photo(png_paths[0], caption)
+                # Izgara gorseli genis oldugu icin fotograf olarak gonderilirse
+                # Telegram uzun kenari ~1280'e indirir ve yazilar okunmaz olur.
+                # Bu yuzden buyuk gorseller dosya olarak gider.
+                image = png_paths[0]
+                if grid_path is not None:
+                    send_document(image, caption)
+                else:
+                    send_photo(image, caption)
             else:
                 send_media_group(png_paths, caption)
             print(f"telegram: {len(png_paths)} gorsel gonderildi")

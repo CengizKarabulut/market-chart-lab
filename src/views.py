@@ -24,7 +24,7 @@ class View:
     title: str
     keys: tuple[str, ...]
     note: str
-    price_height: float = 3.2
+    price_height: float = 3.0
 
     @property
     def compute_keys(self) -> tuple[str, ...]:
@@ -33,47 +33,43 @@ class View:
 
 VIEWS: tuple[View, ...] = (
     View(
-        key="ortalamalar",
-        title="Ortalamalar",
-        keys=("ma", "volume"),
-        note="EMA 20/50 ve SMA 200 · hacim teyidi",
-        price_height=3.6,
+        key="klasik",
+        title="Klasik",
+        keys=("ma", "rsi", "bbpanel", "volume"),
+        note="EMA 20/50 · RSI · Bollinger %B · Hacim",
+        price_height=3.2,
     ),
     View(
-        key="bollinger",
-        title="Bollinger",
-        keys=("bbands", "bbstate", "bbwidth"),
-        note="Bantlar · %B konumu · sıkışma ve genişleme",
+        key="trend",
+        title="Trend takip",
+        keys=("supertrend", "macd", "atr", "obv"),
+        note="Supertrend · MACD · ATR · OBV",
+        price_height=3.2,
     ),
     View(
-        key="momentum",
-        title="Momentum",
-        keys=("ma", "rsi", "macd", "stochrsi"),
-        note="RSI · MACD · Stochastic RSI aynı karede",
+        key="kanal",
+        title="Bulut ve kanal",
+        keys=("ichimoku", "stochrsi", "kcpos", "vwapdev"),
+        note="Ichimoku · Stoch RSI · Keltner konumu · VWAP sapması",
+        price_height=3.2,
+    ),
+    View(
+        key="kirilim",
+        title="Kırılım ve dönüş",
+        keys=("sar", "cci", "dcpos", "rvol"),
+        note="Parabolic SAR · CCI · Donchian konumu · Bağıl hacim",
+        price_height=3.2,
+    ),
+    View(
+        key="profil",
+        title="Hacim profili",
+        keys=("vprofile", "willr", "bbwidth", "obv"),
+        note="Volume Profile · Williams %R · Bant genişliği · OBV",
         price_height=2.8,
     ),
     View(
-        key="supertrend",
-        title="Supertrend",
-        keys=("supertrend", "adx", "volume"),
-        note="Yön ve trend gücü birlikte",
-    ),
-    View(
-        key="ichimoku",
-        title="Ichimoku",
-        keys=("ichimoku", "adx"),
-        note="Bulut 25 bar ileri taşınmış · ADX ile teyit",
-        price_height=3.6,
-    ),
-    View(
-        key="hacim",
-        title="Hacim ve VWAP",
-        keys=("vwap", "volume", "rvol"),
-        note="Hacim ağırlıklı fiyat · bağıl hacim",
-    ),
-    View(
         key="tumu",
-        title="Tüm göstergeler",
+        title="Genel bakış",
         keys=("ma", "bbands", "supertrend", "ichimoku", "vwap",
               "volume", "rsi", "macd", "stochrsi", "adx"),
         note="On göstergenin tamamı tek karede",
@@ -81,10 +77,13 @@ VIEWS: tuple[View, ...] = (
     ),
 )
 
+#: Izgara olarak gonderilen dort kare
+GRID_SET: tuple[str, ...] = ("klasik", "trend", "kanal", "kirilim")
+
 VIEWS_BY_KEY: dict[str, View] = {v.key: v for v in VIEWS}
 
-#: Telegram'a seri halinde gonderilen varsayilan set (tumu haric alti kare)
-DEFAULT_SET: tuple[str, ...] = tuple(v.key for v in VIEWS if v.key != "tumu")
+#: Telegram'a gonderilen varsayilan set
+DEFAULT_SET: tuple[str, ...] = GRID_SET
 
 
 def resolve_views(spec: str) -> tuple[View, ...]:
@@ -92,7 +91,7 @@ def resolve_views(spec: str) -> tuple[View, ...]:
     value = spec.strip().lower()
     if value in {"all", "hepsi"}:
         return VIEWS
-    if value in {"set", "seri"}:
+    if value in {"set", "seri", "grid", "izgara"}:
         return tuple(VIEWS_BY_KEY[k] for k in DEFAULT_SET)
     keys = [k.strip() for k in value.split(",") if k.strip()]
     unknown = [k for k in keys if k not in VIEWS_BY_KEY]

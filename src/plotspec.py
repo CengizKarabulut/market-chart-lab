@@ -30,6 +30,7 @@ class Trace:
     colors: pd.Series | None = None  # bar/segment basina rol adi
     legend: bool = True
     zorder: int = 2
+    tag: bool = False  # sag eksende renkli deger etiketi cizilsin mi
 
 
 @dataclass
@@ -52,6 +53,7 @@ class Panel:
     hlines: list[HLine] = field(default_factory=list)
     yrange: tuple[float, float] | None = None
     zero_line: bool = False
+    params: str = ""  # baslikta parantez icinde gosterilecek ayarlar
 
 
 @dataclass
@@ -63,6 +65,8 @@ class ChartSpec:
     subtitle: str
     snapshot: list[tuple[str, str, str]]  # (etiket, deger, renk rolu)
     note: str = ""  # gorunum aciklamasi (baslikta ucuncu satir)
+    last_bar_open: bool = False  # son bar hala olusuyorsa soluk cizilir
+    log_price: bool = False  # fiyat ekseni logaritmik mi
     price_height: float = 3.4
 
 
@@ -89,6 +93,7 @@ def _ma_overlays(s: dict[str, pd.Series]) -> list[Trace]:
                 color=_MA_COLORS[i % len(_MA_COLORS)],
                 width=1.1 + min(length, 200) / 250.0,
                 zorder=3,
+                tag=True,
             )
         )
     return out
@@ -121,6 +126,7 @@ def _supertrend_overlays(s: dict[str, pd.Series]) -> list[Trace]:
             colors=roles,
             width=1.9,
             zorder=4,
+            tag=True,
         )
     ]
 
@@ -139,7 +145,7 @@ def _ichimoku_overlays(s: dict[str, pd.Series]) -> list[Trace]:
             zorder=0,
         ),
         Trace(name="Tenkan 9", y=s["ICH_tenkan"], color="mint", width=1.0),
-        Trace(name="Kijun 26", y=s["ICH_kijun"], color="accent4", width=1.2),
+        Trace(name="Kijun 26", y=s["ICH_kijun"], color="accent4", width=1.2, tag=True),
     ]
 
 
@@ -157,33 +163,64 @@ def _vwap_overlays(s: dict[str, pd.Series]) -> list[Trace]:
             legend=False,
             zorder=1,
         ),
-        Trace(name="VWAP", y=s["VWAP"], color="vwap", width=1.3, zorder=3),
+        Trace(name="VWAP", y=s["VWAP"], color="vwap", width=1.3, zorder=3, tag=True),
     ]
 
 
+def clip_outliers(series: pd.Series, quantile: float = 0.95,
+                  headroom: float = 1.25) -> tuple[float, int]:
+    """Panel tavani ve tavani asan bar sayisini hesaplar.
+
+    Tek bir devasa hacim bari, panelin geri kalanini duz cizgiye cevirir.
+    Tavani 95. yuzdelige gore belirleyip asan barlari isaretlemek, hem gunluk
+    hacmi okunur kilar hem de aykiri degeri gizlemez.
+    """
+    clean = series.dropna()
+    clean = clean[clean > 0]
+    if len(clean) < 10:
+        return float("nan"), 0
+    cap = float(clean.quantile(quantile)) * headroom
+    if not np.isfinite(cap) or cap <= 0:
+        return float("nan"), 0
+    exceeding = int((clean > cap).sum())
+    # Tavan zaten en yuksek bara yakinsa kirpmaya gerek yok
+    if exceeding == 0 or cap >= float(clean.max()) * 0.92:
+        return float("nan"), 0
+    return cap, exceeding
+
+
 def _volume_panel(df: pd.DataFrame, s: dict[str, pd.Series]) -> Panel:
+    vol = s["VOL"]
+    cap, exceeding = clip_outliers(vol)
     roles = np.where(df["Close"] >= df["Open"], "up", "down")
+    if np.isfinite(cap):
+        # Tavani asan barlar farkli renkte: kirpildiklari gizlenmesin
+        roles = np.where(vol.to_numpy() > cap, "accent2", roles)
+    params = "ort. 20" + (f" · {exceeding} bar kırpıldı" if exceeding else "")
     return Panel(
         key="volume",
-        title="Hacim · RVOL",
+        title="Hacim",
+        params=params,
         height=0.75,
         traces=[
             Trace(
                 name="Hacim",
                 kind="bars",
-                y=s["VOL"],
+                y=vol,
                 colors=pd.Series(roles, index=df.index),
                 legend=False,
             ),
             Trace(name="Hacim ort. 20", y=s["VOL_ma"], color="accent1", width=1.2),
         ],
+        yrange=(0, cap) if np.isfinite(cap) else None,
     )
 
 
 def _rsi_panel(s: dict[str, pd.Series]) -> Panel:
     return Panel(
         key="rsi",
-        title="RSI 14",
+        title="RSI",
+        params="14",
         height=0.8,
         traces=[
             Trace(name="RSI", y=s["RSI"], color="accent3", width=1.5),
@@ -207,7 +244,8 @@ def _macd_panel(s: dict[str, pd.Series]) -> Panel:
     )
     return Panel(
         key="macd",
-        title="MACD 12/26/9",
+        title="MACD",
+        params="12, 26, 9",
         height=0.85,
         traces=[
             Trace(name="Histogram", kind="hist", y=hist, colors=roles, legend=False),
@@ -221,7 +259,8 @@ def _macd_panel(s: dict[str, pd.Series]) -> Panel:
 def _stochrsi_panel(s: dict[str, pd.Series]) -> Panel:
     return Panel(
         key="stochrsi",
-        title="Stoch RSI 14/14/3/3",
+        title="Stoch RSI",
+        params="14, 14, 3, 3",
         height=0.7,
         traces=[
             Trace(name="%K", y=s["SRSI_k"], color="accent2", width=1.4),
@@ -235,7 +274,8 @@ def _stochrsi_panel(s: dict[str, pd.Series]) -> Panel:
 def _adx_panel(s: dict[str, pd.Series]) -> Panel:
     return Panel(
         key="adx",
-        title="ADX / DMI 14",
+        title="ADX / DMI",
+        params="14",
         height=0.75,
         traces=[
             Trace(name="+DI", y=s["DI_plus"], color="up", width=1.1),
@@ -251,6 +291,7 @@ def _bbstate_panel(s: dict[str, pd.Series]) -> Panel:
     return Panel(
         key="bbstate",
         title="Bollinger %B",
+        params="20, 2",
         height=0.7,
         traces=[Trace(name="%B", y=s["BB_percent_b"], color="accent3", width=1.4)],
         hlines=[
@@ -280,12 +321,157 @@ def _bbwidth_panel(s: dict[str, pd.Series]) -> Panel:
 
 def _rvol_panel(s: dict[str, pd.Series]) -> Panel:
     """Bagil hacim: 1.0 = 20 barlik ortalamayla ayni hacim."""
+    cap, exceeding = clip_outliers(s["RVOL"], quantile=0.97, headroom=1.15)
     return Panel(
         key="rvol",
         title="RVOL",
+        params=f"{exceeding} bar kırpıldı" if exceeding else "",
         height=0.6,
         traces=[Trace(name="RVOL", y=s["RVOL"], color="accent2", width=1.4)],
         hlines=[HLine(2.0, "down", "dash", "2x"), HLine(1.0, "muted", "dash", "1x")],
+        # Tek bir hacim patlamasi paneli duz cizgiye cevirmesin
+        yrange=(0, max(cap, 3.0)) if np.isfinite(cap) else None,
+    )
+
+
+
+def _sar_overlays(s: dict[str, pd.Series]) -> list[Trace]:
+    roles = s["SAR_dir"].map({1.0: "up", -1.0: "down"})
+    return [
+        Trace(name="Parabolic SAR", kind="dots", y=s["SAR"], colors=roles,
+              width=2.4, zorder=4, tag=True)
+    ]
+
+
+def _keltner_overlays(s: dict[str, pd.Series]) -> list[Trace]:
+    return [
+        Trace(name="Keltner 20/10/2", kind="band", y=s["KC_upper"], y2=s["KC_lower"],
+              color="accent3", width=1.0, fill_alpha=0.06, zorder=1),
+        Trace(name="KC orta", y=s["KC_mid"], color="accent3", width=1.0, dash="dot",
+              legend=False, tag=True),
+    ]
+
+
+def _donchian_overlays(s: dict[str, pd.Series]) -> list[Trace]:
+    return [
+        Trace(name="Donchian 20", kind="band", y=s["DC_upper"], y2=s["DC_lower"],
+              color="accent1", width=1.1, fill_alpha=0.05, zorder=1),
+        Trace(name="DC orta", y=s["DC_mid"], color="accent1", width=0.9, dash="dot",
+              legend=False),
+    ]
+
+
+def _vprofile_overlays(s: dict[str, pd.Series]) -> list[Trace]:
+    hist = s.get("VP_hist")
+    if hist is None or len(hist) == 0:
+        return []
+    return [Trace(name="Hacim profili", kind="vprofile", y=hist, color="accent2",
+                  fill_alpha=0.30, legend=False, zorder=0)]
+
+
+def _cci_panel(s: dict[str, pd.Series]) -> Panel:
+    return Panel(
+        key="cci", title="CCI", params="20", height=0.75,
+        traces=[Trace(name="CCI", y=s["CCI"], color="accent3", width=1.4)],
+        hlines=[HLine(100, "down", "dash", "100"), HLine(-100, "up", "dash", "-100")],
+        zero_line=True,
+    )
+
+
+def _willr_panel(s: dict[str, pd.Series]) -> Panel:
+    return Panel(
+        key="willr", title="Williams %R", params="14", height=0.7,
+        traces=[Trace(name="%R", y=s["WILLR"], color="accent4", width=1.4)],
+        hlines=[HLine(-20, "down", "dash", "-20"), HLine(-80, "up", "dash", "-80")],
+        yrange=(-100, 0),
+    )
+
+
+def _ao_panel(s: dict[str, pd.Series]) -> Panel:
+    ao = s["AO"]
+    roles = pd.Series(np.where(ao.diff() >= 0, "up", "down"), index=ao.index)
+    return Panel(
+        key="ao", title="Awesome Oscillator", params="5, 34", height=0.7,
+        traces=[Trace(name="AO", kind="hist", y=ao, colors=roles, legend=False)],
+        zero_line=True,
+    )
+
+
+def _atr_panel(s: dict[str, pd.Series]) -> Panel:
+    return Panel(
+        key="atr", title="ATR", params="14", height=0.65,
+        traces=[
+            Trace(name="ATR", y=s["ATR"], color="accent1", width=1.4),
+            Trace(name="ATR %", y=s["ATR_pct"], color="muted", width=0.9, dash="dot",
+                  legend=False),
+        ],
+    )
+
+
+def _obv_panel(s: dict[str, pd.Series]) -> Panel:
+    return Panel(
+        key="obv", title="OBV", params="EMA 20", height=0.75,
+        traces=[
+            Trace(name="OBV", y=s["OBV"], color="accent2", width=1.4),
+            Trace(name="OBV EMA", y=s["OBV_ma"], color="accent1", width=1.0, dash="dash"),
+        ],
+    )
+
+
+
+def _kcpos_panel(df: pd.DataFrame, s: dict[str, pd.Series]) -> Panel:
+    """Fiyatin Keltner kanali icindeki konumu (%).
+
+    Kanali fiyat panelinde bant olarak cizmek yerine tek bir olcuye indirger;
+    boylece mum grafigi tek gostergeye ayrilmis kalir.
+    """
+    span = (s["KC_upper"] - s["KC_lower"]).replace(0, np.nan)
+    pos = 100.0 * (df["Close"] - s["KC_lower"]) / span
+    return Panel(
+        key="kcpos", title="Keltner konumu", params="20, 10, 2", height=0.7,
+        traces=[Trace(name="Konum %", y=pos, color="accent3", width=1.4)],
+        hlines=[HLine(100, "down", "dash", "üst"), HLine(50, "muted", "dot", "orta"),
+                HLine(0, "up", "dash", "alt")],
+    )
+
+
+def _dcpos_panel(df: pd.DataFrame, s: dict[str, pd.Series]) -> Panel:
+    """Fiyatin Donchian kanali icindeki konumu (%). 100 = yeni zirve."""
+    span = (s["DC_upper"] - s["DC_lower"]).replace(0, np.nan)
+    pos = 100.0 * (df["Close"] - s["DC_lower"]) / span
+    return Panel(
+        key="dcpos", title="Donchian konumu", params="20", height=0.7,
+        traces=[Trace(name="Konum %", y=pos, color="accent1", width=1.4)],
+        hlines=[HLine(100, "down", "dash", "zirve"), HLine(0, "up", "dash", "dip")],
+        yrange=(-5, 105),
+    )
+
+
+def _vwapdev_panel(df: pd.DataFrame, s: dict[str, pd.Series]) -> Panel:
+    """Fiyatin VWAP'tan yuzde sapmasi. Sifir = hacim agirlikli adil deger."""
+    dev = 100.0 * (df["Close"] / s["VWAP"].replace(0, np.nan) - 1.0)
+    return Panel(
+        key="vwapdev", title="VWAP sapması", params="%", height=0.7,
+        traces=[Trace(name="Sapma %", y=dev, color="vwap", width=1.4)],
+        zero_line=True,
+    )
+
+
+def _bbands_panel(df: pd.DataFrame, s: dict[str, pd.Series]) -> Panel:
+    """Bollinger %B + sikisma esigi tek panelde."""
+    width = s["BB_width"]
+    clean = width.dropna()
+    squeeze = float(clean.quantile(0.20)) if len(clean) else 0.0
+    scale = float(clean.max()) if len(clean) else 1.0
+    normalized = width / scale * 100.0 if scale else width
+    return Panel(
+        key="bbpanel", title="Bollinger %B", params="20, 2", height=0.75,
+        traces=[
+            Trace(name="%B", y=s["BB_percent_b"] * 100.0, color="accent3", width=1.4),
+            Trace(name="Genişlik", y=normalized, color="accent1", width=0.9, dash="dot"),
+        ],
+        hlines=[HLine(100, "down", "dash", "üst"), HLine(0, "up", "dash", "alt")]
+        + ([HLine(squeeze / scale * 100.0, "accent2", "dot", "sıkışma")] if scale else []),
     )
 
 
@@ -295,6 +481,10 @@ _OVERLAY_BUILDERS = {
     "supertrend": lambda df, s: _supertrend_overlays(s),
     "ichimoku": lambda df, s: _ichimoku_overlays(s),
     "vwap": lambda df, s: _vwap_overlays(s),
+    "sar": lambda df, s: _sar_overlays(s),
+    "keltner": lambda df, s: _keltner_overlays(s),
+    "donchian": lambda df, s: _donchian_overlays(s),
+    "vprofile": lambda df, s: _vprofile_overlays(s),
 }
 
 _PANEL_BUILDERS = {
@@ -306,6 +496,15 @@ _PANEL_BUILDERS = {
     "bbstate": lambda df, s: _bbstate_panel(s),
     "bbwidth": lambda df, s: _bbwidth_panel(s),
     "rvol": lambda df, s: _rvol_panel(s),
+    "cci": lambda df, s: _cci_panel(s),
+    "willr": lambda df, s: _willr_panel(s),
+    "ao": lambda df, s: _ao_panel(s),
+    "atr": lambda df, s: _atr_panel(s),
+    "obv": lambda df, s: _obv_panel(s),
+    "kcpos": lambda df, s: _kcpos_panel(df, s),
+    "dcpos": lambda df, s: _dcpos_panel(df, s),
+    "vwapdev": lambda df, s: _vwapdev_panel(df, s),
+    "bbpanel": lambda df, s: _bbands_panel(df, s),
 }
 
 #: Cizim anahtari -> ihtiyac duydugu hesap anahtari.
@@ -324,6 +523,19 @@ REQUIRES: dict[str, tuple[str, ...]] = {
     "bbstate": ("bbands",),
     "bbwidth": ("bbands",),
     "rvol": ("volume",),
+    "sar": ("sar",),
+    "keltner": ("keltner",),
+    "donchian": ("donchian",),
+    "vprofile": ("vprofile",),
+    "cci": ("cci",),
+    "willr": ("willr",),
+    "ao": ("ao",),
+    "atr": ("atr",),
+    "obv": ("obv",),
+    "kcpos": ("keltner",),
+    "dcpos": ("donchian",),
+    "vwapdev": ("vwap",),
+    "bbpanel": ("bbands",),
 }
 
 
@@ -393,6 +605,21 @@ def build_snapshot(df: pd.DataFrame, s: dict[str, pd.Series]) -> list[tuple[str,
     return chips
 
 
+def needs_log_scale(df: pd.DataFrame, ratio: float = 4.0) -> bool:
+    """Fiyat araligi cok genisse logaritmik olcek gerekir.
+
+    100'den 700'e cikan bir seride lineer eksende ilk aylardaki hareketler
+    ezilir ve mumlar okunamaz hale gelir. Oran esigi asildiginda log'a gecilir.
+    """
+    prices = df["Low"].dropna()
+    highs = df["High"].dropna()
+    if len(prices) == 0 or len(highs) == 0:
+        return False
+    low = float(prices[prices > 0].min()) if (prices > 0).any() else 0.0
+    high = float(highs.max())
+    return low > 0 and high / low >= ratio
+
+
 def build_spec(
     df: pd.DataFrame,
     series: dict[str, pd.Series],
@@ -401,6 +628,8 @@ def build_spec(
     subtitle: str,
     price_height: float = 3.4,
     note: str = "",
+    last_bar_open: bool = False,
+    log_price: bool | None = None,
 ) -> ChartSpec:
     overlays: list[Trace] = []
     panels: list[Panel] = []
@@ -418,6 +647,8 @@ def build_spec(
         snapshot=build_snapshot(df, series),
         price_height=price_height,
         note=note,
+        last_bar_open=last_bar_open,
+        log_price=needs_log_scale(df) if log_price is None else log_price,
     )
 
 

@@ -77,7 +77,34 @@ PAPER = Theme(
     grid_alpha=0.8,
 )
 
-THEMES: dict[str, Theme] = {"ink": INK, "paper": PAPER}
+#: TradingView'in koyu temasina yakin: neredeyse siyah zemin, cok soluk izgara.
+TV = Theme(
+    name="tv",
+    colors={
+        "bg": "#0C0C0C",
+        "panel": "#0C0C0C",
+        "grid": "#1C1F26",
+        "axis": "#2A2E39",
+        "text": "#D1D4DC",
+        "muted": "#787B86",
+        "up": "#26A69A",
+        "down": "#EF5350",
+        "up_soft": "#1B5E56",
+        "down_soft": "#7A2E2E",
+        "accent1": "#FF9800",
+        "accent2": "#AB47BC",
+        "accent3": "#2962FF",
+        "accent4": "#EC407A",
+        "mint": "#00BCD4",
+        "vwap": "#E0E3EB",
+        "neutral": "#787B86",
+    },
+    font_body="IBM Plex Sans, DejaVu Sans, sans-serif",
+    font_mono="IBM Plex Mono, DejaVu Sans Mono, monospace",
+    grid_alpha=0.5,
+)
+
+THEMES: dict[str, Theme] = {"tv": TV, "ink": INK, "paper": PAPER}
 
 
 def get_theme(name: str) -> Theme:
