@@ -123,6 +123,17 @@ def resample_bars(df: pd.DataFrame, factor: int) -> pd.DataFrame:
     # Gun icinde sifirdan baslayan sira numarasi -> N'lik gruplar
     position = df.groupby(days).cumcount()
     bucket = position // factor
+
+    # Gunun son kovasi eksikse onceki kovaya katilir.
+    # BIST saatlik veride gunde 9 bar geliyor (09:00-17:00); 4'e bolununce
+    # 4+4+1 olur ve tek saatlik bar kendi basina sahte bir "4 saatlik" bar
+    # gibi gorunur (acilis=yuksek=dusuk=kapanis). Bu barlar birlestirilir.
+    per_day = df.groupby(days)["Close"].transform("size")
+    last_bucket = (per_day - 1) // factor
+    remainder = per_day % factor
+    orphan = (bucket == last_bucket) & (remainder != 0) & (last_bucket > 0)
+    bucket = bucket.where(~orphan, last_bucket - 1)
+
     groups = [days, bucket]
 
     out = df.groupby(groups).agg(

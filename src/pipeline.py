@@ -68,15 +68,33 @@ def default_params(interval: str, params: dict[str, dict] | None = None) -> dict
     return merged
 
 
-def last_bar_is_open(index: pd.DatetimeIndex, now: pd.Timestamp | None = None) -> bool:
+#: Piyasa -> seans kapanis saati (saat, dakika). None = 7/24 (kripto).
+#: Gunluk ve ustu barlarda bar suresi yaniltici olur: BIST gunluk bari 09:00
+#: damgasini tasir ama seans 18:00'de biter. Sadece sureye bakilirsa bar
+#: ertesi sabaha kadar "acik" gorunur.
+SESSION_END: dict[str, tuple[int, int] | None] = {
+    "bist": (18, 15),
+    "equity": (16, 15),
+    "crypto": None,
+}
+
+
+def last_bar_is_open(
+    index: pd.DatetimeIndex,
+    now: pd.Timestamp | None = None,
+    market: str = "bist",
+) -> bool:
     """Son bar hala olusuyor mu?
 
-    Bar suresi, barlar arasi medyan farktan turetilir. Son barin baslangicina
-    bu sure eklendiginde gelecekte kaliyorsa bar henuz kapanmamistir.
+    Gun ici barlarda bar suresi yeterlidir: son barin baslangicina sure
+    eklendiginde gelecekte kaliyorsa bar kapanmamistir.
 
-    Onemli: acik bir barda RVOL, RSI ve gunluk degisim gibi degerler gun
-    kapaninca degisir. Bunu isaretlemezsek grafik yaniltici olur; ornegin
-    yarim seansta RVOL dogal olarak 1'in cok altinda gorunur.
+    Gunluk ve ustu barlarda ayrica SEANS KAPANISI dikkate alinir. BIST gunluk
+    bari 09:00 damgasi tasir; yalnizca sureye bakilsa bar ertesi sabah 09:00'a
+    kadar acik sayilir ve seans bittikten sonra bile yanlis uyari verir.
+
+    Onemli: acik bir barda RVOL, RSI ve gunluk degisim gun kapaninca degisir.
+    Bunu isaretlemezsek grafik yaniltici olur.
     """
     if len(index) < 3:
         return False
@@ -85,7 +103,22 @@ def last_bar_is_open(index: pd.DatetimeIndex, now: pd.Timestamp | None = None) -
     step = deltas.median()
     if pd.isna(step) or step <= pd.Timedelta(0):
         return False
-    return bool(index[-1] + step > now)
+
+    start = index[-1]
+    if now >= start + step:
+        return False
+
+    session = SESSION_END.get(market, SESSION_END["bist"])
+    if step < pd.Timedelta(days=1) or session is None:
+        return True  # gun ici ya da 7/24 piyasa: sure yeterli
+
+    # Barin kapsadigi son islem gunu: sure sonundan bir gun geri, hafta sonu
+    # denk gelirse cumaya cekilir (haftalik barda cuma kapanisi gecerlidir).
+    last_day = (start + step - pd.Timedelta(days=1)).normalize()
+    while last_day.weekday() >= 5:
+        last_day -= pd.Timedelta(days=1)
+    close_time = last_day + pd.Timedelta(hours=session[0], minutes=session[1])
+    return bool(now < close_time)
 
 
 def _future_index(index: pd.DatetimeIndex, bars: int) -> pd.DatetimeIndex:
@@ -211,7 +244,7 @@ def build_views(
 
     interval_label = INTERVAL_LABELS.get(interval, interval)
     last_ts = df_full.index[-1]
-    bar_open = last_bar_is_open(df_full.index)
+    bar_open = last_bar_is_open(df_full.index, market=symbol_spec.market)
     subtitle = (
         f"{interval_label} · {len(df_window)} bar · son bar "
         f"{fmt.tam_tarih(last_ts)}" + (" · SON BAR AÇIK" if bar_open else "")

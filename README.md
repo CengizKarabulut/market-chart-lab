@@ -100,16 +100,25 @@ başarısız olursa (örneğin saatlik veri gelmezse) diğerleri yine üretilir.
 veri çekilip birleştiriliyor. Birleştirme takvim saatine göre değil **gün sınırlarına göre**
 yapılır: `pd.resample("4h")` barları 00:00, 04:00, 08:00 sınırlarına hizalar, bu da BIST'in
 10:00–18:00 seansında günün ilk barını bir önceki günün kovasına atardı. Bunun yerine her
-günün barları kendi içinde gruplanır; 8 saatlik seans günde iki bar verir ve seans 4'e tam
-bölünmezse artık bar yine de oluşur.
+günün barları kendi içinde gruplanır.
+
+Günün son kovası eksikse önceki kovaya katılır. borsapy BIST için günde 9 saatlik bar
+döndürüyor (09:00–17:00); 4'e bölününce 4+4+1 olur ve tek saatlik bar kendi başına sahte bir
+"4 saatlik" bar gibi görünürdü — açılış, yüksek, düşük ve kapanışı aynı olan boş bir mum.
+Şimdi 4+5 olarak gruplanıyor, günde iki bar çıkıyor.
 
 ### Veriyi dürüst gösteren üç davranış
 
 **Tamamlanmamış son bar.** Seans açıkken çekilen veride son bar hâlâ oluşuyordur; RVOL,
 RSI ve günlük değişim gün kapanınca değişir. Yarım seansta RVOL doğal olarak 1'in çok
-altında görünür ve bu yanıltıcıdır. Bar süresi (barlar arası medyan fark) son barın
-başlangıcına eklendiğinde gelecekte kalıyorsa bar açık sayılır: başlıkta `SON BAR AÇIK`
-uyarısı çıkar, kare künyesine `● bar açık` eklenir ve o mum soluk çizilir.
+altında görünür ve bu yanıltıcıdır. Bar açıksa başlıkta `SON BAR AÇIK` uyarısı çıkar, kare
+künyesine `● bar açık` eklenir ve o mum soluk çizilir.
+
+Tespit gün içi ve günlük barlarda farklı çalışır. Gün içinde bar süresi yeterlidir. Günlük
+ve üstünde ayrıca **seans kapanışı** dikkate alınır: BIST günlük barı `09:00` damgası taşır,
+yalnızca süreye bakılsa bar ertesi sabah 09:00'a kadar açık sayılır ve seans bittikten saatler
+sonra bile yanlış uyarı verirdi. Kapanış saatleri piyasaya göre ayarlıdır (BIST 18:15,
+yabancı hisse 16:15, kripto 7/24 olduğu için yalnızca süre).
 
 **Logaritmik fiyat ekseni.** 100'den 700'e çıkan bir seride lineer eksen ilk ayları ezer.
 Görünen aralıkta yüksek/düşük oranı 4'ü aşarsa eksen otomatik log'a geçer; `--scale log`
@@ -265,7 +274,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-80 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+85 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir

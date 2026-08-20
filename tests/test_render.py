@@ -400,15 +400,51 @@ class TestTelegramPayload(unittest.TestCase):
 
 
 class TestOpenBarAndScale(unittest.TestCase):
+    def _daily(self) -> pd.DatetimeIndex:
+        """BIST gunluk barlari 09:00 damgasi tasir."""
+        return pd.DatetimeIndex([pd.Timestamp(f"2026-08-{d} 09:00")
+                                 for d in (17, 18, 19, 20)])
+
     def test_open_bar_detection(self) -> None:
         from src.pipeline import last_bar_is_open
 
-        idx = pd.bdate_range("2026-08-10", periods=9)  # son bar 20.08 00:00
+        idx = self._daily()
         self.assertTrue(last_bar_is_open(idx, pd.Timestamp("2026-08-20 12:27")))
-        self.assertFalse(last_bar_is_open(idx, pd.Timestamp("2026-08-21 09:00")))
-        # Hafta sonu: cuma bari kapanmis sayilir
-        self.assertFalse(last_bar_is_open(pd.bdate_range("2026-08-10", periods=5),
-                                          pd.Timestamp("2026-08-16 12:00")))
+        self.assertFalse(last_bar_is_open(idx, pd.Timestamp("2026-08-21 09:30")))
+
+    def test_daily_bar_closes_at_session_end_not_next_morning(self) -> None:
+        """Seans 18:00'de biter; bar ertesi sabaha kadar acik gorunmemeli."""
+        from src.pipeline import last_bar_is_open
+
+        idx = self._daily()
+        self.assertTrue(last_bar_is_open(idx, pd.Timestamp("2026-08-20 17:00")))
+        self.assertFalse(last_bar_is_open(idx, pd.Timestamp("2026-08-20 22:41")))
+
+    def test_weekly_bar_open_until_friday_close(self) -> None:
+        from src.pipeline import last_bar_is_open
+
+        weekly = pd.DatetimeIndex([pd.Timestamp(f"2026-{m} 09:00")
+                                   for m in ("07-27", "08-03", "08-10", "08-17")])
+        # Persembe aksami: hafta henuz bitmedi
+        self.assertTrue(last_bar_is_open(weekly, pd.Timestamp("2026-08-20 22:41")))
+        # Cumartesi: cuma kapanisi gecti
+        self.assertFalse(last_bar_is_open(weekly, pd.Timestamp("2026-08-22 12:00")))
+
+    def test_crypto_has_no_session_close(self) -> None:
+        from src.pipeline import last_bar_is_open
+
+        idx = pd.DatetimeIndex([pd.Timestamp(f"2026-08-{d}") for d in (17, 18, 19, 20)])
+        self.assertTrue(last_bar_is_open(idx, pd.Timestamp("2026-08-20 22:41"),
+                                         market="crypto"))
+        self.assertFalse(last_bar_is_open(idx, pd.Timestamp("2026-08-20 22:41"),
+                                          market="bist"))
+
+    def test_intraday_uses_duration_only(self) -> None:
+        from src.pipeline import last_bar_is_open
+
+        hourly = pd.DatetimeIndex([pd.Timestamp(f"2026-08-20 {h}:00") for h in (9, 13, 17)])
+        self.assertTrue(last_bar_is_open(hourly, pd.Timestamp("2026-08-20 18:30")))
+        self.assertFalse(last_bar_is_open(hourly, pd.Timestamp("2026-08-20 22:41")))
 
     def test_open_bar_needs_enough_history(self) -> None:
         from src.pipeline import last_bar_is_open
@@ -549,13 +585,27 @@ class TestResampling(unittest.TestCase):
                          sorted(pd.DatetimeIndex([
                              "2026-08-17", "2026-08-18", "2026-08-19"]).tolist()))
 
-    def test_partial_last_bucket_is_kept(self) -> None:
-        """Seans 4'e tam bolunmuyorsa artik bar yine de olusmali."""
+    def test_orphan_bucket_merges_into_previous(self) -> None:
+        """BIST saatlik veride gunde 9 bar gelir; 4+4+1 degil 4+5 olmali.
+
+        Yoksa tek saatlik bar sahte bir '4 saatlik' bar gibi gorunur ve
+        acilis=yuksek=dusuk=kapanis olan bos bir mum cizilir.
+        """
         from src.data_sources import resample_bars
 
-        out = resample_bars(self._hourly(days=1, per_day=6), 4)
-        self.assertEqual(len(out), 2)
-        self.assertEqual(out.iloc[1]["Volume"], 20.0)  # kalan iki bar
+        out = resample_bars(self._hourly(days=2, per_day=9), 4)
+        self.assertEqual(len(out), 4)  # gunde 2
+        counts = out.groupby(out.index.normalize()).size().unique().tolist()
+        self.assertEqual(counts, [2])
+        self.assertEqual(out.iloc[1]["Volume"], 50.0)  # 5 saatlik ikinci kova
+
+    def test_partial_day_still_forms_a_bar(self) -> None:
+        """Gun daha yeni basladiysa (tek kova) bar yine de olusmali."""
+        from src.data_sources import resample_bars
+
+        out = resample_bars(self._hourly(days=1, per_day=3), 4)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["Volume"], 30.0)
 
     def test_factor_one_is_identity(self) -> None:
         from src.data_sources import resample_bars
