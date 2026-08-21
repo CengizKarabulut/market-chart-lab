@@ -22,9 +22,15 @@ Komutlar:
     /kareler                      hangi karelerin uretildigini yazar
     /yardim                       komut listesi
 
-Guvenlik: yalnizca TELEGRAM_CHAT_ID ile eslesen sohbetten gelen komutlar
-islenir. Baska bir gruba eklenirse bot sessiz kalir. Bu onemli, cunku botun
-token'i bilen biri onu kendi grubuna ekleyebilir.
+Guvenlik ve kapsam:
+
+- Yalnizca TELEGRAM_CHAT_ID ile eslesen sohbetten gelen komutlar islenir.
+  Botun token'ini bilen biri onu kendi grubuna ekleyebilir; orada sessiz kalir.
+- TELEGRAM_TOPIC_ID tanimliysa yalnizca O KONUDAN gelen komutlar islenir.
+  Forum modundaki gruplarda bot her konuda cevap vermesin diye.
+- Komut adlari benzersizdir (/grafik, /kareler, /grafikyardim). Ayni gruptaki
+  baska bir bot da /yardim gibi genel adlar kullaniyorsa ikisi birden cevap
+  verirdi. Genel adlar yalnizca "@BotAdi" ile acikca adreslendiginde islenir.
 
 Bot uzun yoklama (long polling) kullanir; acik bir port ya da web kancasi
 gerektirmez, ev bilgisayarinda calisir.
@@ -70,18 +76,51 @@ def save_offset(offset: int) -> None:
         print(f"offset yazilamadi: {exc}")
 
 
+#: Bu bota ait, baska botlarla cakismasi beklenmeyen komutlar
+OWN_COMMANDS = {"grafik", "kareler", "grafikyardim"}
+#: Yalnizca "@BotAdi" ile adreslendiginde islenen genel komutlar
+SHARED_COMMANDS = {"yardim", "help", "start"}
+
+
 def _allowed(message: dict) -> bool:
-    """Komut, yapilandirilan sohbetten mi geliyor?"""
+    """Komut, yapilandirilan sohbetten VE konudan mi geliyor?"""
     expected = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    return bool(expected) and str(message.get("chat", {}).get("id")) == expected
+    if not expected or str(message.get("chat", {}).get("id")) != expected:
+        return False
+
+    topic = os.environ.get("TELEGRAM_TOPIC_ID", "").strip()
+    if not topic:
+        return True  # konu kisiti yok
+
+    # Forum grubunda baska konulardan gelen komutlar islenmez
+    thread = message.get("message_thread_id")
+    return thread is not None and str(thread) == topic
 
 
-def _parse(text: str) -> tuple[str, list[str]]:
-    """'/grafik TMPOL 4h,1d' -> ('grafik', ['TMPOL', '4h,1d')]."""
+def _parse(text: str, username: str = "") -> tuple[str, list[str]]:
+    """'/grafik TMPOL 4h,1d' -> ('grafik', ['TMPOL', '4h,1d']).
+
+    Adresleme kurallari (grupta birden fazla bot olabilir):
+      /grafik            -> islenir (bize ozgu ad)
+      /grafik@BizimBot   -> islenir
+      /grafik@BaskaBot   -> islenmez
+      /yardim            -> islenmez (baska botta da var, ikisi birden cevap verirdi)
+      /yardim@BizimBot   -> islenir
+    """
     parts = text.strip().split()
     if not parts or not parts[0].startswith("/"):
         return "", []
-    command = parts[0][1:].split("@")[0].lower()  # /grafik@BotAdi -> grafik
+
+    head = parts[0][1:]
+    command, _, target = head.partition("@")
+    command, target = command.lower(), target.lower()
+
+    if target:
+        if username and target != username:
+            return "", []  # baska bota yazilmis
+    elif command in SHARED_COMMANDS:
+        return "", []  # adressiz genel komut: cakismayi onlemek icin atlanir
+
     return command, parts[1:]
 
 
@@ -131,9 +170,9 @@ def handle(message: dict) -> None:
     text = message.get("text", "")
     thread_id = message.get("message_thread_id")
     thread_id = str(thread_id) if thread_id is not None else None
-    command, args = _parse(text)
+    command, args = _parse(text, tg.get_me())
 
-    if command in {"yardim", "help", "start"}:
+    if command in SHARED_COMMANDS | {"grafikyardim"}:
         tg.send_message(
             "<b>Komutlar</b>\n"
             "/grafik SEMBOL [aralık] — gösterge ızgarası üretir\n"
@@ -142,7 +181,7 @@ def handle(message: dict) -> None:
             "   örn: <code>/grafik BTC-USD 4h,1d</code>\n"
             f"   varsayılan aralıklar: {', '.join(DEFAULT_INTERVALS)}\n"
             "/kareler — hangi karelerin üretildiğini gösterir\n"
-            "/yardim — bu mesaj",
+            "/grafikyardim — bu mesaj",
             thread_id,
         )
         return

@@ -675,14 +675,33 @@ class TestBotCommands(unittest.TestCase):
 
         self.assertEqual(_parse("/grafik TMPOL"), ("grafik", ["TMPOL"]))
         self.assertEqual(_parse("/grafik TMPOL 4h,1d"), ("grafik", ["TMPOL", "4h,1d"]))
-        self.assertEqual(_parse("  /Yardim  "), ("yardim", []))
+        self.assertEqual(_parse("/GrafikYardim"), ("grafikyardim", []))
         self.assertEqual(_parse("merhaba"), ("", []))
 
-    def test_bot_username_suffix_is_stripped(self) -> None:
-        """Grupta /grafik@BotAdi seklinde gelir."""
+    def test_command_addressed_to_us_is_accepted(self) -> None:
         from src.bot import _parse
 
-        self.assertEqual(_parse("/grafik@ChartLabBot ASELS"), ("grafik", ["ASELS"]))
+        self.assertEqual(_parse("/grafik@ChartLabBot ASELS", "chartlabbot"),
+                         ("grafik", ["ASELS"]))
+
+    def test_command_addressed_to_another_bot_is_ignored(self) -> None:
+        """Grupta baska bot varsa onun komutuna cevap vermemeliyiz."""
+        from src.bot import _parse
+
+        self.assertEqual(_parse("/grafik@DigerBot ASELS", "chartlabbot"), ("", []))
+
+    def test_bare_shared_command_is_ignored(self) -> None:
+        """/yardim iki botta da var; adressiz gelirse ikisi birden cevap verirdi."""
+        from src.bot import _parse
+
+        self.assertEqual(_parse("/yardim", "chartlabbot"), ("", []))
+        self.assertEqual(_parse("/yardim@ChartLabBot", "chartlabbot"), ("yardim", []))
+
+    def test_unknown_username_still_serves_unaddressed_own_commands(self) -> None:
+        """getMe basarisiz olsa bile /grafik calismaya devam etmeli."""
+        from src.bot import _parse
+
+        self.assertEqual(_parse("/grafik X", ""), ("grafik", ["X"]))
 
     def test_only_configured_chat_is_served(self) -> None:
         """Botun token'ini bilen biri onu baska gruba ekleyebilir."""
@@ -691,10 +710,27 @@ class TestBotCommands(unittest.TestCase):
 
         from src.bot import _allowed
 
-        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123"}):
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123",
+                                          "TELEGRAM_TOPIC_ID": ""}):
             self.assertTrue(_allowed({"chat": {"id": -100123}}))
             self.assertFalse(_allowed({"chat": {"id": -100999}}))
             self.assertFalse(_allowed({"chat": {}}))
+
+    def test_only_configured_topic_is_served(self) -> None:
+        """Forum grubunda bot her konuda cevap vermemeli."""
+        import os
+        from unittest import mock
+
+        from src.bot import _allowed
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123",
+                                          "TELEGRAM_TOPIC_ID": "18"}):
+            self.assertTrue(_allowed({"chat": {"id": -100123},
+                                      "message_thread_id": 18}))
+            self.assertFalse(_allowed({"chat": {"id": -100123},
+                                       "message_thread_id": 5}))
+            # Konu kisiti varken genel akistan gelen komut da islenmez
+            self.assertFalse(_allowed({"chat": {"id": -100123}}))
 
     def test_no_chat_id_configured_blocks_everything(self) -> None:
         import os
@@ -710,8 +746,20 @@ class TestBotCommands(unittest.TestCase):
 
         from src import bot
 
-        with mock.patch.object(bot.tg, "send_message") as send:
+        with mock.patch.object(bot.tg, "get_me", lambda: "chartlabbot"), \
+                mock.patch.object(bot.tg, "send_message") as send:
             bot.handle({"text": "/baskabirsey", "chat": {"id": 1}})
+            send.assert_not_called()
+
+    def test_other_bots_command_gets_no_reply(self) -> None:
+        """Diger botun komutuna 'bilinmeyen komut' bile yazmamaliyiz."""
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "get_me", lambda: "chartlabbot"), \
+                mock.patch.object(bot.tg, "send_message") as send:
+            bot.handle({"text": "/rapor THYAO 4h", "chat": {"id": 1}})
             send.assert_not_called()
 
     def test_grafik_without_symbol_asks_for_one(self) -> None:
@@ -719,7 +767,8 @@ class TestBotCommands(unittest.TestCase):
 
         from src import bot
 
-        with mock.patch.object(bot.tg, "send_message") as send:
+        with mock.patch.object(bot.tg, "get_me", lambda: ""), \
+                mock.patch.object(bot.tg, "send_message") as send:
             bot.handle({"text": "/grafik", "chat": {"id": 1}})
             send.assert_called_once()
             self.assertIn("Sembol", send.call_args[0][0])
@@ -729,7 +778,8 @@ class TestBotCommands(unittest.TestCase):
 
         from src import bot
 
-        with mock.patch.object(bot.tg, "send_message") as send, \
+        with mock.patch.object(bot.tg, "get_me", lambda: ""), \
+                mock.patch.object(bot.tg, "send_message") as send, \
                 mock.patch.object(bot, "_render_and_send") as render:
             bot.handle({"text": "/grafik TMPOL 7h", "chat": {"id": 1}})
             render.assert_not_called()
@@ -740,7 +790,8 @@ class TestBotCommands(unittest.TestCase):
 
         from src import bot
 
-        with mock.patch.object(bot.tg, "send_message"), \
+        with mock.patch.object(bot.tg, "get_me", lambda: ""), \
+                mock.patch.object(bot.tg, "send_message"), \
                 mock.patch.object(bot, "_render_and_send") as render:
             bot.handle({"text": "/grafik tmpol", "chat": {"id": 1}})
             symbol, intervals, _ = render.call_args[0]
@@ -753,7 +804,8 @@ class TestBotCommands(unittest.TestCase):
 
         from src import bot
 
-        with mock.patch.object(bot.tg, "send_message"), \
+        with mock.patch.object(bot.tg, "get_me", lambda: ""), \
+                mock.patch.object(bot.tg, "send_message"), \
                 mock.patch.object(bot, "_render_and_send") as render:
             bot.handle({"text": "/grafik X 1d", "chat": {"id": 1},
                         "message_thread_id": 18})

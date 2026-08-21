@@ -127,6 +127,27 @@ def send_media_group(paths: list[str | Path], caption: str = "") -> dict:
             handle.close()
 
 
+_ME: dict[str, str] = {}
+
+
+def get_me() -> str:
+    """Botun kullanici adini dondurur (onbellekli).
+
+    Grupta birden fazla bot varsa "/yardim@BotAdi" ile hedef secilir; kendi
+    adimizi bilmeden bize mi yazildigini anlayamayiz.
+    """
+    if "username" in _ME:
+        return _ME["username"]
+    token, _, _ = _credentials()
+    try:
+        response = requests.get(API.format(token=token, method="getMe"), timeout=20)
+        payload = response.json() if response.content else {}
+        _ME["username"] = str(payload.get("result", {}).get("username", "")).lower()
+    except Exception:  # noqa: BLE001 - ad ogrenilemezse adressiz komutlar yine calisir
+        _ME["username"] = ""
+    return _ME["username"]
+
+
 def get_updates(offset: int | None = None, timeout: int = 30) -> list[dict]:
     """Uzun yoklama ile yeni mesajlari ceker.
 

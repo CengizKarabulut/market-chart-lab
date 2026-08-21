@@ -289,7 +289,28 @@ Bot açık kaldığı sürece gruptaki komutları dinler. **Bilgisayar kapanırs
 | `/grafik ASELS 1d` | tek periyot |
 | `/grafik BTC-USD 4h,1d` | seçili periyotlar |
 | `/kareler` | hangi karelerin üretildiğini yazar |
-| `/yardim` | komut listesi |
+| `/grafikyardim` | komut listesi |
+
+### Aynı grupta birden fazla bot
+
+Komut adları bilerek benzersiz seçilmiştir (`/grafik`, `/kareler`, `/grafikyardim`).
+`/yardim` gibi genel adlar başka botlarda da bulunduğu için **yalnızca açıkça
+adreslendiğinde** işlenir:
+
+| Yazılan | Bu bot |
+|---|---|
+| `/grafik TMPOL` | cevap verir |
+| `/grafik@BotAdınız TMPOL` | cevap verir |
+| `/grafik@BaşkaBot TMPOL` | sessiz kalır |
+| `/yardim` | sessiz kalır (çakışmayı önlemek için) |
+| `/yardim@BotAdınız` | cevap verir |
+| `/rapor THYAO` (başka botun komutu) | sessiz kalır, "bilinmeyen komut" bile yazmaz |
+
+Bot kendi kullanıcı adını `getMe` ile öğrenir.
+
+**Konu kısıtı:** `TELEGRAM_TOPIC_ID` tanımlıysa yalnızca o konudan gelen komutlar işlenir.
+Forum modundaki gruplarda bot her konu başlığında cevap vermesin diye. Boş bırakılırsa
+gruptaki tüm konular kabul edilir.
 
 Cevap, komutun geldiği konuya düşer. Uzun yoklama (long polling) kullanılır; açık port
 veya web kancası gerekmez, ev bilgisayarında çalışır.
@@ -356,7 +377,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-109 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+117 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir
