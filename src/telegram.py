@@ -32,9 +32,15 @@ def _credentials() -> tuple[str, str, str]:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     topic_id = os.environ.get("TELEGRAM_TOPIC_ID", "").strip()
-    if not token or not chat_id:
+    missing = [name for name, value in
+               (("TELEGRAM_BOT_TOKEN", token), ("TELEGRAM_CHAT_ID", chat_id))
+               if not value]
+    if missing:
         raise TelegramError(
-            "TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID ortam degiskenleri tanimli degil"
+            f"Eksik ortam degiskeni: {', '.join(missing)}\n"
+            "GitHub Actions'ta bu, ayni adli secret'in tanimli olmadigi anlamina "
+            "gelir: Settings -> Secrets and variables -> Actions -> New repository secret.\n"
+            "Yerelde: $env:TELEGRAM_BOT_TOKEN = \"...\" (PowerShell)"
         )
     return token, chat_id, topic_id
 

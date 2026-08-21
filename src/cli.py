@@ -179,6 +179,17 @@ def main(argv: list[str] | None = None) -> int:
     outdir = Path(args.outdir)
     intervals = _intervals(args.interval)
 
+    if args.telegram:
+        # Kimlik bilgisi kontrolu ISIN BASINDA yapilir. Sonda yapilirsa dort
+        # periyodun grafikleri uretildikten sonra hata verir ve dakikalarca
+        # suren is bosa gider.
+        from .telegram import TelegramError, _credentials
+
+        try:
+            _credentials()
+        except TelegramError as exc:
+            raise SystemExit(f"Telegram gonderimi istendi ama yapilandirma eksik.\n{exc}")
+
     produced = []
     for interval in intervals:
         try:

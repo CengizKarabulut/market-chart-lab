@@ -1015,3 +1015,56 @@ class TestSelfRestart(unittest.TestCase):
                 mock.patch.object(bot_runner, "restart_self") as restart:
             bot_runner.main()
             restart.assert_not_called()
+
+
+class TestTelegramConfigCheck(unittest.TestCase):
+    """Yapilandirma eksikse IS BASLAMADAN hata verilmeli.
+
+    Sonda kontrol edilirse dort periyodun grafikleri uretildikten sonra hata
+    verilir; Actions'ta dakikalarca suren kosu bosa gider.
+    """
+
+    def test_missing_config_fails_before_any_rendering(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import cli
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "",
+                                          "TELEGRAM_CHAT_ID": ""}), \
+                mock.patch.object(cli, "_build_one") as build:
+            with self.assertRaises(SystemExit) as ctx:
+                cli.main(["--symbol", "ASELS", "--telegram"])
+            build.assert_not_called()
+
+        message = str(ctx.exception)
+        self.assertIn("TELEGRAM_BOT_TOKEN", message)
+        self.assertIn("secret", message.lower())
+
+    def test_error_names_only_the_missing_variable(self) -> None:
+        import os
+        from unittest import mock
+
+        from src.telegram import TelegramError, _credentials
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "abc",
+                                          "TELEGRAM_CHAT_ID": ""}):
+            with self.assertRaises(TelegramError) as ctx:
+                _credentials()
+        message = str(ctx.exception)
+        self.assertIn("TELEGRAM_CHAT_ID", message)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN,", message)
+
+    def test_no_check_when_telegram_not_requested(self) -> None:
+        """--telegram yoksa yapilandirma aranmamali."""
+        import os
+        from unittest import mock
+
+        from src import cli
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "",
+                                          "TELEGRAM_CHAT_ID": ""}), \
+                mock.patch.object(cli, "_build_one",
+                                  side_effect=RuntimeError("veri yok")):
+            with self.assertRaises(RuntimeError):
+                cli.main(["--symbol", "ASELS", "--no-html"])
