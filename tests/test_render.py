@@ -665,3 +665,190 @@ class TestMultiInterval(unittest.TestCase):
         for key in SYNTHETIC_INTERVALS:
             self.assertIn(key, DEFAULT_PERIODS, key)
             self.assertIn(key, INTERVAL_LABELS, key)
+
+
+class TestBotCommands(unittest.TestCase):
+    """Bot komut ayristirma ve guvenlik kontrolu (ag yok)."""
+
+    def test_parse_command(self) -> None:
+        from src.bot import _parse
+
+        self.assertEqual(_parse("/grafik TMPOL"), ("grafik", ["TMPOL"]))
+        self.assertEqual(_parse("/grafik TMPOL 4h,1d"), ("grafik", ["TMPOL", "4h,1d"]))
+        self.assertEqual(_parse("  /Yardim  "), ("yardim", []))
+        self.assertEqual(_parse("merhaba"), ("", []))
+
+    def test_bot_username_suffix_is_stripped(self) -> None:
+        """Grupta /grafik@BotAdi seklinde gelir."""
+        from src.bot import _parse
+
+        self.assertEqual(_parse("/grafik@ChartLabBot ASELS"), ("grafik", ["ASELS"]))
+
+    def test_only_configured_chat_is_served(self) -> None:
+        """Botun token'ini bilen biri onu baska gruba ekleyebilir."""
+        import os
+        from unittest import mock
+
+        from src.bot import _allowed
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123"}):
+            self.assertTrue(_allowed({"chat": {"id": -100123}}))
+            self.assertFalse(_allowed({"chat": {"id": -100999}}))
+            self.assertFalse(_allowed({"chat": {}}))
+
+    def test_no_chat_id_configured_blocks_everything(self) -> None:
+        import os
+        from unittest import mock
+
+        from src.bot import _allowed
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": ""}):
+            self.assertFalse(_allowed({"chat": {"id": -100123}}))
+
+    def test_unknown_command_is_ignored(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "send_message") as send:
+            bot.handle({"text": "/baskabirsey", "chat": {"id": 1}})
+            send.assert_not_called()
+
+    def test_grafik_without_symbol_asks_for_one(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "send_message") as send:
+            bot.handle({"text": "/grafik", "chat": {"id": 1}})
+            send.assert_called_once()
+            self.assertIn("Sembol", send.call_args[0][0])
+
+    def test_bad_interval_is_reported_before_any_work(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "send_message") as send, \
+                mock.patch.object(bot, "_render_and_send") as render:
+            bot.handle({"text": "/grafik TMPOL 7h", "chat": {"id": 1}})
+            render.assert_not_called()
+            self.assertIn("Bilinmeyen aralık", send.call_args[0][0])
+
+    def test_default_intervals_used_when_omitted(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "send_message"), \
+                mock.patch.object(bot, "_render_and_send") as render:
+            bot.handle({"text": "/grafik tmpol", "chat": {"id": 1}})
+            symbol, intervals, _ = render.call_args[0]
+            self.assertEqual(symbol, "TMPOL")  # buyuk harfe cevrilir
+            self.assertEqual(intervals, list(bot.DEFAULT_INTERVALS))
+
+    def test_thread_id_is_passed_through(self) -> None:
+        """Cevap, komutun geldigi konuya dusmeli."""
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "send_message"), \
+                mock.patch.object(bot, "_render_and_send") as render:
+            bot.handle({"text": "/grafik X 1d", "chat": {"id": 1},
+                        "message_thread_id": 18})
+            self.assertEqual(render.call_args[0][2], "18")
+
+
+class TestPollOnce(unittest.TestCase):
+    """Zamanlanmis calistirma: bekleyen komutlari isle, onayla, cik."""
+
+    def _updates(self, ids: list[int]) -> list[dict]:
+        return [
+            {"update_id": i,
+             "message": {"text": "/grafik TMPOL 1d", "chat": {"id": -100123}}}
+            for i in ids
+        ]
+
+    def test_processes_and_confirms_offset(self) -> None:
+        """Son adimda offset onaylanmali; yoksa ayni komut tekrar islenir."""
+        import os
+        from unittest import mock
+
+        from src import bot
+
+        calls: list[dict] = []
+
+        def fake_get_updates(offset=None, timeout=30):
+            calls.append({"offset": offset})
+            return self._updates([10, 11]) if offset is None else []
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123"}), \
+                mock.patch.object(bot.tg, "_credentials", lambda: ("t", "-100123", "")), \
+                mock.patch.object(bot.tg, "get_updates", fake_get_updates), \
+                mock.patch.object(bot.tg, "send_message"), \
+                mock.patch.object(bot, "_render_and_send"):
+            handled = bot.poll_once()
+
+        self.assertEqual(handled, 2)
+        self.assertEqual(calls[-1]["offset"], 12)  # son update_id + 1
+
+    def test_foreign_chat_is_skipped_but_still_confirmed(self) -> None:
+        """Baska gruptan gelen komut islenmez ama onaylanir, yoksa sonsuza dek kalir."""
+        import os
+        from unittest import mock
+
+        from src import bot
+
+        confirmed: list[int | None] = []
+
+        def fake_get_updates(offset=None, timeout=30):
+            confirmed.append(offset)
+            if offset is None:
+                return [{"update_id": 5,
+                         "message": {"text": "/grafik X", "chat": {"id": -999}}}]
+            return []
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123"}), \
+                mock.patch.object(bot.tg, "_credentials", lambda: ("t", "-100123", "")), \
+                mock.patch.object(bot.tg, "get_updates", fake_get_updates), \
+                mock.patch.object(bot, "_render_and_send") as render:
+            handled = bot.poll_once()
+
+        self.assertEqual(handled, 0)
+        render.assert_not_called()
+        self.assertEqual(confirmed[-1], 6)
+
+    def test_empty_queue_does_nothing(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with mock.patch.object(bot.tg, "_credentials", lambda: ("t", "c", "")), \
+                mock.patch.object(bot.tg, "get_updates", lambda offset=None, timeout=30: []):
+            self.assertEqual(bot.poll_once(), 0)
+
+    def test_one_failing_command_does_not_stop_the_rest(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot
+
+        def fake_get_updates(offset=None, timeout=30):
+            return self._updates([1, 2, 3]) if offset is None else []
+
+        attempts = {"n": 0}
+
+        def flaky(message):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError("veri gelmedi")
+
+        with mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123"}), \
+                mock.patch.object(bot.tg, "_credentials", lambda: ("t", "-100123", "")), \
+                mock.patch.object(bot.tg, "get_updates", fake_get_updates), \
+                mock.patch.object(bot, "handle", flaky):
+            handled = bot.poll_once()
+
+        self.assertEqual(attempts["n"], 3)
+        self.assertEqual(handled, 2)

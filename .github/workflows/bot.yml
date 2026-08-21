@@ -1,0 +1,42 @@
+name: Telegram Botu
+
+# GitHub Actions surekli calisamaz; bu is her 5 dakikada bir tetiklenip
+# biriken komutlari isler. Telegram guncellemeleri 24 saat saklar, bu yuzden
+# komutlar kaybolmaz - yalnizca cevap gecikmeli gelir.
+#
+# UYARI: 5 dakikada bir tetikleme gunde ~290 calistirma demektir. Depo public
+# ise Actions dakikalari ucretsizdir; PRIVATE ise aylik kotayi hizla tuketir.
+# Private depoda cron satirini seyreltin (orn. "*/30 * * * *").
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# Ust uste binen calistirmalar ayni komutu iki kez islemesin
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Bekleyen komutları işle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: ${{ secrets.TELEGRAM_TOPIC_ID }}
+        run: python -m src.bot --once

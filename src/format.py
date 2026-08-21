@@ -38,6 +38,29 @@ def fiyat(value: float) -> str:
     return sayi(value, 4)
 
 
+def eksen(value: float) -> str:
+    """Eksen etiketi: gereksiz sifirlari atar.
+
+    Neden ayri: fiyat() basamak sayisini degere gore secer. Logaritmik eksende
+    ayni eksende hem 0,2 hem 700 bulunabilir ve "5,000" (bes) ile "500,00"
+    (bes yuz) yan yana dusup okunamaz hale gelir. Burada bin ayirici nokta,
+    ondalik virgul kalir ama sondaki sifirlar atilir: 0,2 · 5 · 20 · 500 · 1.000
+    """
+    if value is None or not np.isfinite(value):
+        return "—"
+    if abs(value) >= 1000:
+        return sayi(value, 0)
+    if abs(value) >= 10:
+        text = sayi(value, 1)
+    elif abs(value) >= 1:
+        text = sayi(value, 2)
+    else:
+        text = sayi(value, 4)
+    if "," in text:
+        text = text.rstrip("0").rstrip(",")
+    return text
+
+
 def kisa(value: float) -> str:
     """Buyuk sayilari kisaltir: 1250000 -> '1,25M'."""
     if value is None or not np.isfinite(value):

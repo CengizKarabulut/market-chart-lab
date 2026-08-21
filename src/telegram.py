@@ -39,12 +39,13 @@ def _credentials() -> tuple[str, str, str]:
     return token, chat_id, topic_id
 
 
-def _post(method: str, files: dict, data: dict, timeout: int = 60) -> dict:
+def _post(method: str, files: dict | None, data: dict, timeout: int = 60) -> dict:
     token, chat_id, topic_id = _credentials()
     data = {"chat_id": chat_id, **data}
-    if topic_id:
-        # Forum modundaki gruplarda mesaji dogru konuya yonlendirir
+    # Cevap verilen mesajin konusu varsa o oncelikli; yoksa ortam degiskeni
+    if not data.get("message_thread_id") and topic_id:
         data["message_thread_id"] = topic_id
+    data = {k: v for k, v in data.items() if v is not None}
     response = requests.post(
         API.format(token=token, method=method), data=data, files=files, timeout=timeout
     )
@@ -54,25 +55,37 @@ def _post(method: str, files: dict, data: dict, timeout: int = 60) -> dict:
     return payload
 
 
-def send_photo(path: str | Path, caption: str = "") -> dict:
+def send_message(text: str, thread_id: str | None = None) -> dict:
+    """Duz metin mesaj. Bot komutlarina cevap vermek icin."""
+    return _post("sendMessage", files=None,
+                 data={"text": text[:4000], "parse_mode": "HTML",
+                       "message_thread_id": thread_id})
+
+
+def send_photo(path: str | Path, caption: str = "",
+               thread_id: str | None = None) -> dict:
     _credentials()  # eksik token hatasi, dosya hatasindan once verilsin
     path = Path(path)
     with path.open("rb") as handle:
         return _post(
             "sendPhoto",
             files={"photo": (path.name, handle, "image/png")},
-            data={"caption": caption[:CAPTION_LIMIT], "parse_mode": "HTML"},
+            data={"caption": caption[:CAPTION_LIMIT], "parse_mode": "HTML",
+                  "message_thread_id": thread_id},
         )
 
 
-def send_document(path: str | Path, caption: str = "") -> dict:
+def send_document(path: str | Path, caption: str = "",
+                  thread_id: str | None = None) -> dict:
     _credentials()
     path = Path(path)
+    mime = "image/png" if path.suffix.lower() == ".png" else "text/html"
     with path.open("rb") as handle:
         return _post(
             "sendDocument",
-            files={"document": (path.name, handle, "text/html")},
-            data={"caption": caption[:CAPTION_LIMIT], "parse_mode": "HTML"},
+            files={"document": (path.name, handle, mime)},
+            data={"caption": caption[:CAPTION_LIMIT], "parse_mode": "HTML",
+                  "message_thread_id": thread_id},
         )
 
 
@@ -106,6 +119,25 @@ def send_media_group(paths: list[str | Path], caption: str = "") -> dict:
     finally:
         for handle in handles:
             handle.close()
+
+
+def get_updates(offset: int | None = None, timeout: int = 30) -> list[dict]:
+    """Uzun yoklama ile yeni mesajlari ceker.
+
+    timeout saniyesi boyunca baglantiyi acik tutar; mesaj gelmezse bos liste
+    doner. Bu, saniyede bir istek atmaktan cok daha verimlidir.
+    """
+    token, _, _ = _credentials()
+    response = requests.get(
+        API.format(token=token, method="getUpdates"),
+        params={"offset": offset, "timeout": timeout,
+                "allowed_updates": json.dumps(["message"])},
+        timeout=timeout + 15,
+    )
+    payload = response.json() if response.content else {}
+    if not payload.get("ok"):
+        raise TelegramError(f"getUpdates basarisiz: {response.status_code} {payload}")
+    return payload.get("result", [])
 
 
 def build_caption(symbol: str, subtitle: str, chips: list[tuple[str, str, str]]) -> str:

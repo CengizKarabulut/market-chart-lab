@@ -139,6 +139,9 @@ değeri kendi renginde bir kutucuk olarak sağ kenarda, panellerin sol üstünde
 biçiminde satır içi künye. Sayılar Türkçe biçimlenir (`1.234,56`), ay adları Türkçedir.
 Bunlar `locale` ayarından bağımsız yapılır; GitHub Actions'ta Türkçe locale kurulu olmayabilir.
 
+Logaritmik eksende etiketlerdeki gereksiz sıfırlar atılır. Aksi halde aynı eksende `5,000`
+(beş) ile `500,00` (beş yüz) yan yana düşer ve okunmaz hale gelir; artık `5` ve `500` yazar.
+
 Sağdaki değer etiketleri çakışırsa dikeyde itilir — etiketteki **sayı değişmez**, yalnızca
 çizim konumu kayar.
 
@@ -216,6 +219,7 @@ Listede olmayan bir kodu tek seferlik kullanmak için `bist:` öneki yeterlidir.
 ```
 src/
   views.py          kare tanımları: hangi göstergeler hangi karede
+  bot.py            Telegram komut botu (uzun yoklama)
   compose.py        kareleri tek görselde ızgaraya dizen katman
   format.py         Türkçe sayı ve tarih biçimleme (locale'den bağımsız)
   data_sources.py   sembol çözümleme + borsapy/yfinance yönlendirme ve yedekleme
@@ -264,6 +268,70 @@ Boş bırakılırsa mesaj grubun genel akışına gider.
 Izgara görseli **dosya olarak** gönderilir. Fotoğraf olarak gönderilseydi Telegram uzun
 kenarı ~1280 piksele indirir ve künyelerdeki rakamlar okunmaz hale gelirdi.
 
+## Telegram botu
+
+Gruptan komutla grafik üretir:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN = "..."
+$env:TELEGRAM_CHAT_ID   = "-1003502567927"
+$env:TELEGRAM_TOPIC_ID  = "18"
+python -m src.bot
+```
+
+Bot açık kaldığı sürece gruptaki komutları dinler. **Bilgisayar kapanırsa komutlar
+çalışmaz** — sürekli çalışma seçenekleri aşağıda.
+
+| Komut | Sonuç |
+|---|---|
+| `/grafik TMPOL` | dört periyot (4h, 1d, 1wk, 1mo) için ızgara |
+| `/grafik ASELS 1d` | tek periyot |
+| `/grafik BTC-USD 4h,1d` | seçili periyotlar |
+| `/kareler` | hangi karelerin üretildiğini yazar |
+| `/yardim` | komut listesi |
+
+Cevap, komutun geldiği konuya düşer. Uzun yoklama (long polling) kullanılır; açık port
+veya web kancası gerekmez, ev bilgisayarında çalışır.
+
+**Güvenlik:** yalnızca `TELEGRAM_CHAT_ID` ile eşleşen sohbetten gelen komutlar işlenir.
+Token'ı bilen biri botu kendi grubuna ekleyebilir; o gruptan gelen komutlara bot sessiz kalır.
+
+### Botu sürekli çalışır tutmak
+
+Üç seçenek var, üçünün de farklı bedeli var:
+
+**1. GitHub Actions (bedava, gecikmeli).** `.github/workflows/bot.yml` her 5 dakikada bir
+tetiklenip biriken komutları işler. Telegram güncellemeleri 24 saat sunucusunda tuttuğu için
+komut kaybolmaz; yalnızca cevap 5–15 dakika gecikir. Evde hiçbir şey açık kalmaz.
+
+Durum dosyası gerekmez: iş sonunda offset onaylanır, aynı komut iki kez işlenmez.
+
+> **Dakika uyarısı:** 5 dakikada bir tetikleme günde ~290 çalıştırma demektir. Depo *public*
+> ise Actions dakikaları ücretsizdir. *Private* ise aylık kotayı hızla tüketir — cron satırını
+> seyreltin (`*/30 * * * *`) veya bu yolu kullanmayın.
+
+**2. Kendi bilgisayarında servis olarak.** Anında cevap. Windows'ta Görev Zamanlayıcı ile
+açılışta başlatılabilir:
+
+```powershell
+$exe = "$HOME\Documents\Codex\market-chart-lab\.venv\Scripts\python.exe"
+$dir = "$HOME\Documents\Codex\market-chart-lab"
+$action  = New-ScheduledTaskAction -Execute $exe -Argument "-m src.bot" -WorkingDirectory $dir
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "MarketChartLabBot" -Action $action -Trigger $trigger
+```
+
+Ortam değişkenlerinin görev için de tanımlı olması gerekir (kullanıcı düzeyinde
+`setx TELEGRAM_BOT_TOKEN "..."` gibi).
+
+**3. Küçük bir sunucu.** Oracle Cloud ücretsiz katmanı, Raspberry Pi veya ucuz bir VPS.
+Anında cevap, evde bir şey açık kalmaz, karşılığında kurulum işi.
+
+```bash
+python -m src.bot          # sürekli dinler
+python -m src.bot --once   # bekleyenleri işle ve çık (zamanlanmış çalıştırma)
+```
+
 ## GitHub Actions
 
 `Actions → Grafik Üret → Run workflow` ile sembol, aralık ve kare seti seçilerek çalıştırılır.
@@ -278,7 +346,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-87 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+100 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir

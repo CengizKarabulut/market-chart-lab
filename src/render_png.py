@@ -404,7 +404,10 @@ def render_png(
         price_ax.set_yscale("log")
         price_ax.yaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 3, 5, 7)))
         price_ax.yaxis.set_minor_formatter(NullFormatter())
-    price_ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: fmt.fiyat(v)))
+    # Log eksende basamak sayisi degerden degere degisirse etiketler okunmaz
+    # hale gelir ("5,000" bes, "500,00" bes yuz). eksen() sondaki sifirlari atar.
+    price_ax.yaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: fmt.eksen(v) if spec.log_price else fmt.fiyat(v)))
 
     # Satir araligi eksen yuksekligine gore hesaplanir; sabit oran kullanilirsa
     # kucuk karolarda satirlar ust uste biner.
