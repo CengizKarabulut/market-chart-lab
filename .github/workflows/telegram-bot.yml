@@ -1,0 +1,68 @@
+name: Telegram Komut Botu
+
+# Tasarim: tek kosu icinde UZUN BAGLANTI ile surekli dinlenir. Kosu suresi
+# dolunca calistirici kendini yeniden tetikler ve zincir devam eder.
+#
+# Neden sik cron kullanilmiyor: GitHub'in "*/5 * * * *" gibi programlari
+# pratikte cogu zaman atlanir; komutlar dakikalarca cevapsiz kalir. Asagidaki
+# saatlik cron yalnizca zincir koparsa (hata, iptal, kota) devreye giren
+# emniyet agidir.
+#
+# ZINCIRIN SURMESI ICIN: actions:write yetkili bir kisisel erisim jetonunu
+# GH_PAT secret'i olarak tanimlayin. GitHub, GITHUB_TOKEN ile tetiklenen
+# olaylarin yeni kosu baslatmasini engeller (sonsuz dongu korumasi).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5 * * * *"   # emniyet agi: zincir koptuysa yeniden baslat
+
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  listen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Offset koşular arasında saklanır; yoksa aynı komut tekrar işlenir
+      # ya da koşular arasında yazılan komutlar kaybolur.
+      - name: Bot durumunu geri yükle
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: bot-offset-${{ github.run_id }}
+          restore-keys: bot-offset-
+
+      - name: Dinle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOT_RUN_MINUTES: "50"
+        run: python -m src.bot_runner
+
+      - name: Bot durumunu sakla
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: bot-offset-${{ github.run_id }}

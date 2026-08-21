@@ -219,7 +219,8 @@ Listede olmayan bir kodu tek seferlik kullanmak için `bist:` öneki yeterlidir.
 ```
 src/
   views.py          kare tanımları: hangi göstergeler hangi karede
-  bot.py            Telegram komut botu (uzun yoklama)
+  bot.py            Telegram komut botu (uzun bağlantı ile dinleme)
+  bot_runner.py     Actions içinde zinciri sürdüren çalıştırıcı
   compose.py        kareleri tek görselde ızgaraya dizen katman
   format.py         Türkçe sayı ve tarih biçimleme (locale'den bağımsız)
   data_sources.py   sembol çözümleme + borsapy/yfinance yönlendirme ve yedekleme
@@ -298,20 +299,40 @@ Token'ı bilen biri botu kendi grubuna ekleyebilir; o gruptan gelen komutlara bo
 
 ### Botu sürekli çalışır tutmak
 
-Üç seçenek var, üçünün de farklı bedeli var:
+**GitHub Actions üzerinde zincir (önerilen).** `.github/workflows/telegram-bot.yml`
+tek koşu içinde **50 dakika boyunca sürekli dinler**, süre dolunca kendini yeniden
+tetikler ve zincir devam eder. Komutlara saniyeler içinde cevap gelir.
 
-**1. GitHub Actions (bedava, gecikmeli).** `.github/workflows/bot.yml` her 5 dakikada bir
-tetiklenip biriken komutları işler. Telegram güncellemeleri 24 saat sunucusunda tuttuğu için
-komut kaybolmaz; yalnızca cevap 5–15 dakika gecikir. Evde hiçbir şey açık kalmaz.
+Sık cron (`*/5 * * * *`) kullanılmamasının sebebi: GitHub'ın beş dakikalık programları
+pratikte çoğu zaman atlanır, komutlar dakikalarca cevapsız kalır. Buradaki saatlik cron
+yalnızca zincir koparsa (hata, iptal, kota) devreye giren emniyet ağıdır.
 
-Durum dosyası gerekmez: iş sonunda offset onaylanır, aynı komut iki kez işlenmez.
+Gerekli secret'lar: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_TOPIC_ID` ve
+zincir için `GH_PAT`.
 
-> **Dakika uyarısı:** 5 dakikada bir tetikleme günde ~290 çalıştırma demektir. Depo *public*
-> ise Actions dakikaları ücretsizdir. *Private* ise aylık kotayı hızla tüketir — cron satırını
-> seyreltin (`*/30 * * * *`) veya bu yolu kullanmayın.
+> **`GH_PAT` neden gerekli:** GitHub, `GITHUB_TOKEN` ile tetiklenen olayların yeni koşu
+> başlatmasını engeller (sonsuz döngü koruması). Zincirin sürmesi için `actions: write`
+> yetkili bir kişisel erişim jetonu gerekir. Tanımlı değilse koşu biter ve cron bir
+> sonraki saat başında yeniden başlatır — bot çalışır ama saatte bir kopar.
 
-**2. Kendi bilgisayarında servis olarak.** Anında cevap. Windows'ta Görev Zamanlayıcı ile
-açılışta başlatılabilir:
+Zinciri **bir kez elle başlatmak** gerekir: `Actions → Telegram Komut Botu → Run workflow`.
+Koşu 50 dakika "çalışıyor" görünür; bu normal, dinliyor demektir. Durdurmak için çalışan
+koşuyu iptal edin (cron bir sonraki saat başında yeniden başlatır) ya da workflow'u
+Actions sekmesinden devre dışı bırakın.
+
+İşlenen son güncelleme `state/telegram_offset.json` dosyasına yazılır ve Actions
+önbelleğinde saklanır. Böylece koşular arasında yazılan komutlar kaybolmaz ve aynı komut
+iki kez işlenmez.
+
+**Kendi bilgisayarında.** Anında cevap, kota yok, ama bilgisayar açık kalmalı:
+
+```powershell
+python -m src.bot                 # süresiz dinler
+python -m src.bot --minutes 50    # süreli
+python -m src.bot --once          # bekleyenleri işle ve çık
+```
+
+Açılışta otomatik başlatmak için Görev Zamanlayıcı:
 
 ```powershell
 $exe = "$HOME\Documents\Codex\market-chart-lab\.venv\Scripts\python.exe"
@@ -319,17 +340,6 @@ $dir = "$HOME\Documents\Codex\market-chart-lab"
 $action  = New-ScheduledTaskAction -Execute $exe -Argument "-m src.bot" -WorkingDirectory $dir
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 Register-ScheduledTask -TaskName "MarketChartLabBot" -Action $action -Trigger $trigger
-```
-
-Ortam değişkenlerinin görev için de tanımlı olması gerekir (kullanıcı düzeyinde
-`setx TELEGRAM_BOT_TOKEN "..."` gibi).
-
-**3. Küçük bir sunucu.** Oracle Cloud ücretsiz katmanı, Raspberry Pi veya ucuz bir VPS.
-Anında cevap, evde bir şey açık kalmaz, karşılığında kurulum işi.
-
-```bash
-python -m src.bot          # sürekli dinler
-python -m src.bot --once   # bekleyenleri işle ve çık (zamanlanmış çalıştırma)
 ```
 
 ## GitHub Actions
@@ -346,7 +356,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-100 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+109 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir

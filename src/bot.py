@@ -1,15 +1,18 @@
 """Telegram botu: gruptan komutla grafik uretir.
 
-Iki calisma bicimi:
+Calisma bicimleri:
 
-    python -m src.bot            surekli dinler (bilgisayar acik kalmali)
-    python -m src.bot --once     bekleyen komutlari isler ve cikar
+    python -m src.bot                 suresiz dinler (Ctrl+C ile durur)
+    python -m src.bot --minutes 50    50 dakika dinler, sonra cikar
+    python -m src.bot --once          bekleyenleri isler ve cikar
 
-Ikincisi GitHub Actions icin: zamanlanmis is her calistiginda birikmis
-komutlari isler. Telegram guncellemeleri 24 saat sunucusunda tutar ve offset
-ile onaylanana kadar tekrar tekrar dondurur; bu yuzden calismalar arasinda
-durum saklamaya gerek yoktur. Isin sonunda offset onaylanir, ayni komut iki
-kez islenmez.
+--minutes GitHub Actions icin: tek kosu boyunca surekli dinlenir, sure dolunca
+bot_runner kendini yeniden tetikleyip zinciri surdurur. Sik cron'lara guvenmek
+yerine bu yontem tercih edilir; GitHub'in 5 dakikalik programlari pratikte
+cogu zaman atlanir ve komutlar cevapsiz kalir.
+
+Offset (islenen son guncelleme) diske yazilir. Kosular arasinda komut kaybolmaz
+ve ayni komut iki kez islenmez.
 
 Komutlar:
     /grafik TMPOL                 varsayilan araliklar (4h, 1d, 1wk, 1mo)
@@ -29,6 +32,7 @@ gerektirmez, ev bilgisayarinda calisir.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import traceback
@@ -42,8 +46,28 @@ from .theme import get_theme
 from .views import resolve_views
 
 DEFAULT_INTERVALS = ("4h", "1d", "1wk", "1mo")
+#: Telegram baglantiyi bu kadar saniye acik tutar; mesaj gelince hemen doner
+LONG_POLL_SECONDS = 25
+STATE_FILE = Path(os.environ.get("BOT_STATE_FILE", "state/telegram_offset.json"))
 #: Ayni anda tek is calissin; art arda gelen komutlar sirayla islenir
 BUSY_MESSAGE = "Şu anda başka bir grafik hazırlanıyor, birazdan tekrar deneyin."
+
+
+def load_offset() -> int | None:
+    """Islenen son guncellemenin sirasini diskten okur."""
+    try:
+        return int(json.loads(STATE_FILE.read_text(encoding="utf-8"))["offset"])
+    except Exception:  # noqa: BLE001 - dosya yoksa ya da bozuksa bastan basla
+        return None
+
+
+def save_offset(offset: int) -> None:
+    """Offset'i diske yazar; kosular arasinda komut kaybolmasin diye."""
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps({"offset": offset}), encoding="utf-8")
+    except OSError as exc:
+        print(f"offset yazilamadi: {exc}")
 
 
 def _allowed(message: dict) -> bool:
@@ -163,12 +187,13 @@ def poll_once(timeout: int = 0) -> int:
     yoktur: son adimda offset onaylanir, boylece ayni komut bir daha gelmez.
     """
     tg._credentials()
-    updates = tg.get_updates(timeout=timeout)
+    updates = tg.get_updates(offset=load_offset(), timeout=timeout)
     if not updates:
         return 0
 
     handled = 0
     last_id = updates[-1]["update_id"]
+    save_offset(last_id + 1)
     for update in updates:
         message = update.get("message")
         if not message or not _allowed(message):
@@ -184,18 +209,23 @@ def poll_once(timeout: int = 0) -> int:
     return handled
 
 
-def run(poll_timeout: int = 30) -> None:
-    """Bot dongusu. Ctrl+C ile durur."""
-    tg._credentials()  # eksik yapilandirmayi hemen bildir
-    print("Bot calisiyor. Komutlar: /grafik SEMBOL [aralik] · /kareler · /yardim")
-    print("Durdurmak icin Ctrl+C")
+def run(minutes: float | None = None, poll_timeout: int = LONG_POLL_SECONDS) -> int:
+    """Uzun baglanti ile dinler. minutes verilirse o sure sonunda cikar.
 
-    offset: int | None = None
-    # Botu baslatmadan once biriken eski komutlar islenmesin
-    for update in tg.get_updates(timeout=0):
-        offset = update["update_id"] + 1
+    Telegram baglantiyi poll_timeout saniye acik tutar ve mesaj gelir gelmez
+    doner; bu yuzden dongu bos yere donmez ve komutlara saniyeler icinde cevap
+    verilir.
+    """
+    tg._credentials()
+    offset = load_offset()
+    deadline = time.monotonic() + minutes * 60 if minutes else None
 
-    while True:
+    print("Bot dinliyor. Komutlar: /grafik SEMBOL [aralik] · /kareler · /yardim")
+    if deadline:
+        print(f"Calisma suresi: {minutes:.0f} dakika")
+
+    handled = 0
+    while deadline is None or time.monotonic() < deadline:
         try:
             updates = tg.get_updates(offset=offset, timeout=poll_timeout)
         except KeyboardInterrupt:
@@ -207,18 +237,22 @@ def run(poll_timeout: int = 30) -> None:
 
         for update in updates:
             offset = update["update_id"] + 1
+            save_offset(offset)
             message = update.get("message")
             if not message or not _allowed(message):
                 continue
             try:
                 handle(message)
+                handled += 1
             except Exception:  # noqa: BLE001 - tek komut hatasi botu durdurmasin
                 traceback.print_exc()
                 try:
-                    tg.send_message("❌ Beklenmeyen hata; günlüğe yazıldı.",
-                                    str(message.get("message_thread_id") or "") or None)
+                    tg.send_message(
+                        "❌ Beklenmeyen hata; günlüğe yazıldı.",
+                        str(message.get("message_thread_id") or "") or None)
                 except Exception:  # noqa: BLE001
                     pass
+    return handled
 
 
 if __name__ == "__main__":
@@ -226,14 +260,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(prog="market-chart-lab bot")
     parser.add_argument("--once", action="store_true",
-                        help="Bekleyen komutlari isle ve cik (zamanlanmis calistirma)")
+                        help="Bekleyen komutlari isle ve cik")
+    parser.add_argument("--minutes", type=float, default=None,
+                        help="Kac dakika dinlensin (bos: suresiz)")
     options = parser.parse_args()
 
     if options.once:
-        count = poll_once()
-        print(f"{count} komut islendi")
+        print(f"{poll_once()} komut islendi")
     else:
         try:
-            run()
+            print(f"{run(minutes=options.minutes)} komut islendi")
         except KeyboardInterrupt:
             print("\nBot durduruldu.")

@@ -763,6 +763,19 @@ class TestBotCommands(unittest.TestCase):
 class TestPollOnce(unittest.TestCase):
     """Zamanlanmis calistirma: bekleyen komutlari isle, onayla, cik."""
 
+    def setUp(self) -> None:
+        """Offset dosyasi yalitilmali; yoksa testler birbirini etkiler."""
+        from unittest import mock
+
+        from src import bot
+
+        self._tmp = tempfile.TemporaryDirectory()
+        patcher = mock.patch.object(bot, "STATE_FILE",
+                                    Path(self._tmp.name) / "offset.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self._tmp.cleanup)
+
     def _updates(self, ids: list[int]) -> list[dict]:
         return [
             {"update_id": i,
@@ -852,3 +865,153 @@ class TestPollOnce(unittest.TestCase):
 
         self.assertEqual(attempts["n"], 3)
         self.assertEqual(handled, 2)
+
+
+class TestBotOffsetState(unittest.TestCase):
+    """Offset diske yazilmazsa kosular arasinda komut kaybolur ya da tekrarlanir."""
+
+    def test_roundtrip(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state" / "offset.json"
+            with mock.patch.object(bot, "STATE_FILE", path):
+                self.assertIsNone(bot.load_offset())
+                bot.save_offset(42)
+                self.assertEqual(bot.load_offset(), 42)
+
+    def test_corrupt_file_starts_clean(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "offset.json"
+            path.write_text("bu json degil", encoding="utf-8")
+            with mock.patch.object(bot, "STATE_FILE", path):
+                self.assertIsNone(bot.load_offset())
+
+
+class TestTimedRun(unittest.TestCase):
+    """--minutes ile calisan dongu suresi dolunca cikmali."""
+
+    def test_run_stops_at_deadline(self) -> None:
+        from unittest import mock
+
+        from src import bot
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(bot, "STATE_FILE", Path(tmp) / "o.json"), \
+                mock.patch.object(bot.tg, "_credentials", lambda: ("t", "c", "")), \
+                mock.patch.object(bot.tg, "get_updates",
+                                  lambda offset=None, timeout=25: []):
+            handled = bot.run(minutes=0.0005, poll_timeout=0)  # ~30 ms
+        self.assertEqual(handled, 0)
+
+    def test_offset_saved_per_update(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot
+
+        batches = [[
+            {"update_id": 7,
+             "message": {"text": "/grafik X 1d", "chat": {"id": -100123}}}
+        ]]
+
+        def fake_get_updates(offset=None, timeout=25):
+            return batches.pop() if batches else []
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "-100123"}), \
+                mock.patch.object(bot, "STATE_FILE", Path(tmp) / "o.json"), \
+                mock.patch.object(bot.tg, "_credentials", lambda: ("t", "-100123", "")), \
+                mock.patch.object(bot.tg, "get_updates", fake_get_updates), \
+                mock.patch.object(bot.tg, "send_message"), \
+                mock.patch.object(bot, "_render_and_send"), \
+                mock.patch.object(bot, "STATE_FILE", Path(tmp) / "o.json"):
+            bot.run(minutes=0.004, poll_timeout=0)
+            self.assertEqual(bot.load_offset(), 8)
+
+
+class TestSelfRestart(unittest.TestCase):
+    """Zincir: kosu bitince workflow yeniden tetiklenmeli."""
+
+    def _env(self, **extra) -> dict:
+        base = {"GITHUB_REPOSITORY": "kisi/depo", "GITHUB_REF_NAME": "main",
+                "GH_PAT": "", "GITHUB_TOKEN": ""}
+        base.update(extra)
+        return base
+
+    def test_dispatch_called_with_pat(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot_runner
+
+        captured = {}
+
+        class R:
+            status_code = 204
+            text = ""
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            captured.update(url=url, headers=headers, json=json)
+            return R()
+
+        with mock.patch.dict(os.environ, self._env(GH_PAT="pat123")), \
+                mock.patch.object(bot_runner.requests, "post", fake_post):
+            self.assertTrue(bot_runner.restart_self())
+
+        self.assertIn("kisi/depo", captured["url"])
+        self.assertIn("telegram-bot.yml", captured["url"])
+        self.assertEqual(captured["json"], {"ref": "main"})
+        self.assertIn("pat123", captured["headers"]["Authorization"])
+
+    def test_pat_preferred_over_github_token(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot_runner
+
+        with mock.patch.dict(os.environ, self._env(GH_PAT="pat", GITHUB_TOKEN="tok")):
+            self.assertEqual(bot_runner._restart_token(), ("pat", "GH_PAT"))
+
+    def test_missing_token_is_reported_not_raised(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot_runner
+
+        with mock.patch.dict(os.environ, self._env()):
+            self.assertFalse(bot_runner.restart_self())
+
+    def test_http_error_returns_false(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot_runner
+
+        class R:
+            status_code = 403
+            text = "Resource not accessible"
+
+        with mock.patch.dict(os.environ, self._env(GITHUB_TOKEN="tok")), \
+                mock.patch.object(bot_runner.requests, "post",
+                                  lambda *a, **k: R()):
+            self.assertFalse(bot_runner.restart_self())
+
+    def test_self_restart_can_be_disabled(self) -> None:
+        import os
+        from unittest import mock
+
+        from src import bot_runner
+
+        with mock.patch.dict(os.environ, {"BOT_SELF_RESTART": "0",
+                                          "BOT_RUN_MINUTES": "0.0005"}), \
+                mock.patch.object(bot_runner.bot, "run", lambda minutes=None: 0), \
+                mock.patch.object(bot_runner, "restart_self") as restart:
+            bot_runner.main()
+            restart.assert_not_called()
