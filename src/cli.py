@@ -16,7 +16,8 @@ import sys
 from pathlib import Path
 
 from . import indicators as ind
-from .pipeline import DEFAULT_PERIODS, INTERVAL_LABELS, build_chart, build_views
+from .pipeline import (DEFAULT_PERIODS, INTERVAL_LABELS, build_chart,
+                        build_views, default_bars)
 from .compose import compose_grid
 from .render_html import render_html
 from .render_png import render_png
@@ -41,8 +42,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Bar araligi. Virgulle birden fazla verilebilir: "
                              "'4h,1d,1wk' -> her biri icin ayri gorsel. "
                              f"Gecerli: {', '.join(DEFAULT_PERIODS)}")
-    parser.add_argument("--bars", "-b", type=int, default=250,
-                        help="Grafikte gosterilecek bar sayisi (varsayilan 250)")
+    parser.add_argument("--bars", "-b", type=int, default=None,
+                        help="Grafikte gosterilecek bar sayisi. Verilmezse araliga "
+                             "gore secilir (gunluk 250, haftalik 180, aylik 96).")
     parser.add_argument("--period", default=None,
                         help="Cekilecek gecmis (1mo, 1y, 5y, max). Bos ise araliga gore secilir.")
     parser.add_argument("--scale", default="auto", choices=["auto", "log", "linear"],
@@ -115,9 +117,10 @@ def _intervals(raw: str) -> list[str]:
 
 def _build_one(args, interval: str, theme, outdir: Path):
     """Tek bir bar araligi icin kareleri uretir ve dosyalari yazar."""
+    bars = args.bars if args.bars else default_bars(interval)
     if args.indicators:
         view_set = build_chart(
-            symbol=args.symbol, interval=interval, bars=args.bars,
+            symbol=args.symbol, interval=interval, bars=bars,
             period=args.period, keys=resolve_keys(args.indicators),
             project_bars=args.project_bars, log_price=_scale(args.scale),
         )
@@ -128,7 +131,7 @@ def _build_one(args, interval: str, theme, outdir: Path):
             raise SystemExit(str(exc)) from exc
         view_set = build_views(
             symbol=args.symbol, views=views, interval=interval,
-            bars=args.bars, period=args.period, project_bars=args.project_bars,
+            bars=bars, period=args.period, project_bars=args.project_bars,
             log_price=_scale(args.scale),
         )
 

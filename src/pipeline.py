@@ -32,6 +32,20 @@ INTERVAL_LABELS = {
     "1mo": "aylık",
 }
 
+#: Aralik basina makul bar sayisi. Sabit 250 kullanilirsa aylik grafikte
+#: 20 yillik gecmis sikisir ve mumlar bir piksele iner; haftalikta da benzer
+#: sorun olur. Kullanici --bars verirse bu tablo devre disi kalir.
+DEFAULT_BARS: dict[str, int] = {
+    "1m": 180, "5m": 200, "15m": 220, "30m": 240,
+    "1h": 250, "2h": 250, "3h": 250, "4h": 250,
+    "1d": 250, "1wk": 180, "1mo": 96,
+}
+
+
+def default_bars(interval: str) -> int:
+    return DEFAULT_BARS.get(interval, 250)
+
+
 #: Periyot secilmediginde araliga gore makul bir varsayilan
 DEFAULT_PERIODS = {
     "1m": "5d",

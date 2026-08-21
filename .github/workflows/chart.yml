@@ -10,11 +10,11 @@ on:
       interval:
         description: "Bar aralığı (virgülle birden fazla: 4h,1d,1wk)"
         required: true
-        default: "4h,1d,1wk"
+        default: "4h,1d,1wk,1mo"
       bars:
-        description: "Gösterilecek bar sayısı"
+        description: "Bar sayısı (boş bırakılırsa aralığa göre seçilir)"
         required: false
-        default: "250"
+        default: ""
       views:
         description: "Kareler: set (6), all (7) veya virgüllü liste"
         required: false
@@ -64,7 +64,7 @@ jobs:
           python -m src.cli \
             --symbol "${{ inputs.symbol }}" \
             --interval "${{ inputs.interval }}" \
-            --bars "${{ inputs.bars }}" \
+            ${{ inputs.bars != '' && format('--bars {0}', inputs.bars) || '' }} \
             --views "${{ inputs.views }}" \
             --grid "${{ inputs.grid }}" \
             --theme "${{ inputs.theme }}" \

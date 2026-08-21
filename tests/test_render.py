@@ -213,8 +213,24 @@ class TestCLIArgs(unittest.TestCase):
         from src.cli import parse_args
 
         args = parse_args(["--symbol", "THYAO"])
-        self.assertEqual((args.interval, args.bars, args.theme), ("1d", 250, "tv"))
+        self.assertEqual((args.interval, args.theme), ("1d", "tv"))
+        self.assertIsNone(args.bars)  # araliga gore secilir
         self.assertEqual(args.grid, 2)
+
+    def test_default_bars_scale_with_interval(self) -> None:
+        """Aylikta 250 bar 20 yil demektir; mumlar bir piksele iner."""
+        from src.pipeline import default_bars
+
+        self.assertEqual(default_bars("1d"), 250)
+        self.assertLess(default_bars("1wk"), default_bars("1d"))
+        self.assertLess(default_bars("1mo"), default_bars("1wk"))
+        self.assertEqual(default_bars("bilinmeyen"), 250)
+
+    def test_explicit_bars_wins(self) -> None:
+        from src.cli import parse_args
+
+        args = parse_args(["--symbol", "X", "--bars", "80"])
+        self.assertEqual(args.bars, 80)
 
 
 class TestPipelineViews(unittest.TestCase):

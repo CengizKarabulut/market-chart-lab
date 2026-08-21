@@ -80,7 +80,7 @@ Tüm kareler tek veri çekimi ve tek hesap turuyla üretilir.
 ### Çoklu periyot
 
 ```bash
-python -m src.cli --symbol TMPOL --interval 4h,1d,1wk --telegram
+python -m src.cli --symbol TMPOL --interval 4h,1d,1wk,1mo --telegram
 ```
 
 **Windows PowerShell'de değeri tırnak içine alın:**
@@ -95,6 +95,10 @@ vardır.
 
 Her periyot için ayrı bir ızgara üretilir ve Telegram'a ayrı ayrı gönderilir. Bir periyot
 başarısız olursa (örneğin saatlik veri gelmezse) diğerleri yine üretilir.
+
+**Bar sayısı periyoda göre ayarlanır.** Sabit 250 kullanılsa aylık grafikte 20 yıllık geçmiş
+sıkışır ve mumlar bir piksele iner. Varsayılanlar: gün içi ve günlük 250, haftalık 180,
+aylık 96. `--bars` verilirse bu tablo devre dışı kalır.
 
 **4 saatlik barlar türetilmiştir.** Ne yfinance ne borsapy 4 saatlik bar sunuyor; saatlik
 veri çekilip birleştiriliyor. Birleştirme takvim saatine göre değil **gün sınırlarına göre**
@@ -195,7 +199,7 @@ Listede olmayan bir kodu tek seferlik kullanmak için `bist:` öneki yeterlidir.
 | Parametre | Varsayılan | Açıklama |
 |-----------|-----------|----------|
 | `--interval` | `1d` | Tek veya virgüllü liste: `4h,1d,1wk` → her biri için ayrı görsel |
-| `--bars` | `250` | Grafikte gösterilecek bar sayısı |
+| `--bars` | aralığa göre | Bar sayısı. Verilmezse: gün içi/günlük 250, haftalık 180, aylık 96 |
 | `--period` | aralığa göre | Çekilecek geçmiş; göstergeler tüm geçmişte hesaplanıp sonra kırpılır |
 | `--views` | `set` | `set` (4 kare ızgara), `all` (tümü) veya virgüllü görünüm listesi |
 | `--grid` | `2` | Izgara sütun sayısı. `0` = birleştirme yok |
@@ -274,7 +278,7 @@ uzun kenarı ~1280 piksele indirir ve yazılar okunmaz hale gelir.
 python -m unittest discover -s tests -t .
 ```
 
-85 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
+87 test, hepsi ağsız; sentetik OHLCV serisi üretilir. Gösterge testleri Wilder RMA'sını
 elle hesaplanmış değerlerle, Ichimoku kaydırmasını bar sayısıyla, MACD histogramını kimlik
 bağıntısıyla, Volume Profile'ı toplam hacmin korunmasıyla ve OBV'yi fiyat yönüyle uyumuyla
 doğrular. Kare testleri her ızgara karesinin dört kategoriden birer gösterge taşıdığını, hiçbir
